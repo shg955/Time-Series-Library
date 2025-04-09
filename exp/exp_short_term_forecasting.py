@@ -167,7 +167,7 @@ class Exp_Short_Term_Forecast(Exp_Basic):
         y = test_loader.dataset.timeseries
         x = torch.tensor(x, dtype=torch.float32).to(self.device)
         x = x.unsqueeze(-1)
-
+        x_enc_shape, x_mark_enc_shape, x_dec_shape, x_mark_dec_shape = None, None, None, None
         if test:
             print('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
@@ -186,6 +186,11 @@ class Exp_Short_Term_Forecast(Exp_Basic):
             id_list = np.arange(0, B, 1)
             id_list = np.append(id_list, B)
             for i in range(len(id_list) - 1):
+                if x_enc_shape is None:
+                    x_enc_shape = x[id_list[i]:id_list[i + 1]].shape
+                    x_mark_enc_shape = x[id_list[i]:id_list[i + 1]].shape # dummy
+                    x_dec_shape = dec_inp[id_list[i]:id_list[i + 1]].shape
+                    x_mark_dec_shape = dec_inp[id_list[i]:id_list[i + 1]].shape # dummy
                 outputs[id_list[i]:id_list[i + 1], :, :] = self.model(x[id_list[i]:id_list[i + 1]], None,
                                                                       dec_inp[id_list[i]:id_list[i + 1]], None)
 
@@ -237,4 +242,30 @@ class Exp_Short_Term_Forecast(Exp_Basic):
             print('owa:', owa_results)
         else:
             print('After all 6 tasks are finished, you can calculate the averaged index')
+        #### ONNX 파일 추출
+        # dummy input 생성
+        x_enc = torch.randn(*x_enc_shape)
+        x_mark_enc = torch.randn(* x_mark_enc_shape)
+        x_dec = torch.randn(* x_dec_shape)
+        x_mark_dec = torch.randn(* x_mark_dec_shape)
+        print("x_enc_shape:", x_enc_shape)
+        print("x_mark_enc_shape:", x_mark_enc_shape)
+        print("x_dec_shape:", x_dec_shape) 
+        print("x_mark_dec_shape:", x_mark_dec_shape)
+        torch.onnx.export(self.model, 
+                          (x_enc, x_mark_enc, x_dec, x_mark_dec), 
+                          os.path.join('./checkpoints/' + setting, 'checkpoint_onnx.onnx'), 
+                          input_names=['x_enc', 'x_mark_enc', 'x_dec', 'x_mark_dec'],
+                          output_names=['output'],
+                          opset_version=11,  # ONNX 버전
+                          export_params=True,        # 모델 파일 안에 학습된 모델 가중치를 저장할지의 여부
+                          do_constant_folding=True,  # 최적화시 상수폴딩을 사용할지의 여부
+                          dynamic_axes={
+                              'x_enc': {0: 'batch_size', 1: 'seq_len_enc'},
+                              'x_mark_enc': {0: 'batch_size', 1: 'seq_len_enc'},
+                              'x_dec': {0: 'batch_size', 1: 'seq_len_dec'},
+                              'x_mark_dec': {0: 'batch_size', 1: 'seq_len_dec'},
+                              'output': {0: 'batch_size', 1: 'seq_len_dec'}
+                          },
+                          verbose=True)
         return

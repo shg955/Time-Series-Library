@@ -174,9 +174,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if test:
             print('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
-
+        input = []
         preds = []
         trues = []
+        x_enc_shape, x_mark_enc_shape, x_dec_shape, x_mark_dec_shape = None, None, None, None
         folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -193,6 +194,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                if x_enc_shape is None:
+                    x_enc_shape = batch_x.shape
+                    x_mark_enc_shape = batch_x_mark.shape # dummy
+                    x_dec_shape = dec_inp.shape
+                    x_mark_dec_shape = batch_y_mark.shape # dummy
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
@@ -271,5 +277,30 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
-
+        #### ONNX 파일 추출
+        # dummy input 생성
+        x_enc = torch.randn(*x_enc_shape)
+        x_mark_enc = torch.randn(* x_mark_enc_shape)
+        x_dec = torch.randn(* x_dec_shape)
+        x_mark_dec = torch.randn(* x_mark_dec_shape)
+        print("x_enc_shape:", x_enc_shape)
+        print("x_mark_enc_shape:", x_mark_enc_shape)
+        print("x_dec_shape:", x_dec_shape) 
+        print("x_mark_dec_shape:", x_mark_dec_shape)
+        torch.onnx.export(self.model, 
+                          (x_enc, x_mark_enc, x_dec, x_mark_dec), 
+                          os.path.join('./checkpoints/' + setting, 'checkpoint_onnx.onnx'), 
+                          input_names=['x_enc', 'x_mark_enc', 'x_dec', 'x_mark_dec'],
+                          output_names=['output'],
+                          opset_version=11,  # ONNX 버전
+                          export_params=True,        # 모델 파일 안에 학습된 모델 가중치를 저장할지의 여부
+                          do_constant_folding=True,  # 최적화시 상수폴딩을 사용할지의 여부
+                          dynamic_axes={
+                              'x_enc': {0: 'batch_size', 1: 'seq_len_enc'},
+                              'x_mark_enc': {0: 'batch_size', 1: 'seq_len_enc'},
+                              'x_dec': {0: 'batch_size', 1: 'seq_len_dec'},
+                              'x_mark_dec': {0: 'batch_size', 1: 'seq_len_dec'},
+                              'output': {0: 'batch_size', 1: 'seq_len_dec'}
+                          },
+                          verbose=True)
         return

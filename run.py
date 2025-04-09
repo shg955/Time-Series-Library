@@ -180,8 +180,7 @@ if __name__ == '__main__':
         
         # MLflow로 하이퍼파라미터 로깅
         mlflow.log_params(params)  # 하이퍼파라미터 로깅
-        mlflow.log_artifact("/root/workspace/Time-Series-Library/test_results/short_term_forecast_m4_Monthly_DLinear_m4_ftM_sl36_ll18_pl18_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc3_ebtimeF_dtTrue_Exp_0/0.png")
-        exit()
+
         if torch.cuda.is_available() and args.use_gpu:
             args.device = torch.device('cuda:{}'.format(args.gpu))
             print('Using GPU')
@@ -241,7 +240,6 @@ if __name__ == '__main__':
 
                 print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
                 exp.train(setting)
-
                 print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
                 exp.test(setting)
                 if args.gpu_type == 'mps':
