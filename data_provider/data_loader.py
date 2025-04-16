@@ -746,3 +746,202 @@ class UEAloader(Dataset):
 
     def __len__(self):
         return len(self.all_IDs)
+
+
+class Dataset_Stock(Dataset):
+    def __init__(self, args, root_path, flag='train', size=None,
+                 features='S', data_path='ETTh1.csv',
+                 target='OT', scale=True, timeenc=0, freq='h', seasonal_patterns=None):
+        # size [seq_len, label_len, pred_len]
+        self.args = args
+        # info
+        if size == None:
+            self.seq_len = 24 * 4 * 4
+            self.label_len = 24 * 4
+            self.pred_len = 24 * 4
+        else:
+            self.seq_len = size[0]
+            self.label_len = size[1]
+            self.pred_len = size[2]
+        # init
+        assert flag in ['train', 'test', 'val']
+        type_map = {'train': 0, 'val': 1, 'test': 2}
+        self.set_type = type_map[flag]
+
+        self.features = features
+        self.target = target
+        self.scale = scale
+        self.timeenc = timeenc
+        self.freq = freq
+
+        self.root_path = root_path
+        self.data_path = data_path
+        self.ticker_name = os.path.splitext(os.path.basename(data_path))[0]
+        self.__read_data__()
+
+    def __read_data__(self):
+        self.scaler = StandardScaler()
+        df_raw = pd.read_csv(os.path.join(self.root_path,
+                                          self.data_path))
+        
+        # 필요한 feature만 추출
+        # df = df[['Date', 'Open', 'High', 'Low', 'Volume', 'Vwap', 'Close']]
+        df_raw = df_raw[['Date', 'Open', 'High', 'Low', 'Volume', 'Vwap', 'Close', 'snp_index_open', 'snp_index_high', 'snp_index_low', 'snp_index_volume', 'snp_index_close', 'snp_index_vwap']]
+        
+        # 0, Inf, nan 값 제거
+        df_raw.replace(0.0, np.nan, inplace=True)
+        df_raw.replace(np.Inf, np.nan, inplace=True)
+
+        except_idx = df_raw.dropna(axis=0).index
+        df_raw = df_raw.loc[except_idx, :]
+
+        start_date = '2009-01-01'
+        end_date = '2023-12-31'
+
+        df_raw = df_raw[(df_raw['Date'] >= start_date) & (df_raw['Date'] <= end_date)]
+
+        df_raw = df_raw.rename(columns={'Date' : 'date', 'Close' : 'OT'})
+    
+        df_raw['date'] = pd.to_datetime(df_raw['date'])
+        
+        df_raw['date'] = df_raw['date'].dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        '''
+        df_raw.columns: ['date', ...(other features), target feature]
+        '''
+        cols = list(df_raw.columns)
+        cols.remove(self.target)
+        cols.remove('date')
+        df_raw = df_raw[['date'] + cols + [self.target]]
+        # print(cols)
+        num_train = int(len(df_raw) * 0.7)
+        num_test = int(len(df_raw) * 0.2)
+        num_vali = len(df_raw) - num_train - num_test
+
+        if(num_train < (self.seq_len + self.pred_len) or num_test < (self.seq_len + self.pred_len) or num_vali < (self.seq_len + self.pred_len)):
+            print('skip stock: {}'.format(self.ticker_name))
+            self.data_x, self.data_y = [], []
+            return
+
+        border1s = [0, num_train - self.seq_len, len(df_raw) - num_test - self.seq_len]
+        border2s = [num_train, num_train + num_vali, len(df_raw)]
+        border1 = border1s[self.set_type]
+        border2 = border2s[self.set_type]
+
+        if self.features == 'M' or self.features == 'MS':
+            cols_data = df_raw.columns[1:]
+            df_data = df_raw[cols_data]
+        elif self.features == 'S':
+            df_data = df_raw[[self.target]]
+
+        if self.scale:
+            train_data = df_data[border1s[0]:border2s[0]]
+            self.scaler.fit(train_data.values)
+            # print(self.scaler.mean_)
+            # exit()
+            data = self.scaler.transform(df_data.values)
+        else:
+            data = df_data.values
+
+        df_stamp = df_raw[['date']][border1:border2]
+        df_stamp['date'] = pd.to_datetime(df_stamp.date)
+        if self.timeenc == 0:
+            df_stamp['month'] = df_stamp.date.apply(lambda row: row.month, 1)
+            df_stamp['day'] = df_stamp.date.apply(lambda row: row.day, 1)
+            df_stamp['weekday'] = df_stamp.date.apply(lambda row: row.weekday(), 1)
+            df_stamp['hour'] = df_stamp.date.apply(lambda row: row.hour, 1)
+            data_stamp = df_stamp.drop(['date'], axis=1).values
+        elif self.timeenc == 1:
+            data_stamp = time_features(pd.to_datetime(df_stamp['date'].values), freq=self.freq)
+            data_stamp = data_stamp.transpose(1, 0)
+
+        self.data_x = data[border1:border2]
+        self.data_y = data[border1:border2]
+        self.data_stamp = data_stamp
+
+    def __getitem__(self, index):
+        s_begin = index
+        s_end = s_begin + self.seq_len
+        r_begin = s_end - self.label_len
+        r_end = r_begin + self.label_len + self.pred_len
+
+        seq_x = self.data_x[s_begin:s_end]
+        seq_y = self.data_y[r_begin:r_end]
+        seq_x_mark = self.data_stamp[s_begin:s_end]
+        seq_y_mark = self.data_stamp[r_begin:r_end]
+
+        return seq_x, seq_y, seq_x_mark, seq_y_mark
+
+    def __len__(self):
+        if((len(self.data_x) - self.seq_len - self.pred_len + 1) < 0):
+            return 0
+        else:
+            return len(self.data_x) - self.seq_len - self.pred_len + 1
+
+    def inverse_transform(self, data):
+        return self.scaler.inverse_transform(data)
+    
+
+class Dataset_SNP500(Dataset):
+    def __init__(self, args, root_path, flag='train', size=None,
+                 features='S', stock_files='',
+                 target='OT', scale=True, timeenc=0, freq='h', seasonal_patterns=None):
+        """
+        Args:
+            root_path (str): CSV 파일이 저장된 루트 경로
+            stock_files (list): 종목별 CSV 파일 목록
+            flag (str): 데이터 타입 ('train', 'val', 'test')
+            size (list): [seq_len, label_len, pred_len]
+            features (str): 'S' (Single), 'M' (Multi)
+            target (str): 예측 대상 열
+            scale (bool): 정규화 여부
+            timeenc (int): 시간 인코딩 방식 (0 또는 1)
+            freq (str): 데이터 주기 ('h', 't', 등)
+        """
+        self.datasets = []
+        cnt = 0
+        for stock_file in stock_files:
+            dataset = Dataset_Stock(
+                args = args,
+                root_path=args.root_path,
+                data_path=stock_file,
+                flag=flag,
+                size=[args.seq_len, args.label_len, args.pred_len],
+                features=args.features,
+                target=args.target,
+                timeenc=timeenc,
+                freq=freq,
+                seasonal_patterns=args.seasonal_patterns
+            )
+            if(len(dataset) > 0):
+                self.datasets.append(dataset)
+            else:
+                cnt+=1
+                print('skip stock', cnt)
+
+    def __len__(self):
+        # 전체 길이는 종목별 데이터셋 길이의 합
+        return sum(len(dataset) for dataset in self.datasets)
+
+    def __getitem__(self, index):
+        # 종목별 데이터셋에서 적절한 인덱스를 찾음
+        for dataset in self.datasets:
+            if index < len(dataset):
+                batch_x, batch_y, batch_x_mark, batch_y_mark = dataset[index]
+                return batch_x, batch_y, batch_x_mark, batch_y_mark
+            index -= len(dataset)
+        raise IndexError("Index out of range in Dataset_Stock")
+
+    
+    def get_stock_indices(self):
+        """
+        Returns:
+            list: 종목별로 분리된 데이터셋의 인덱스 리스트
+        """
+        stock_indices = []
+        start = 0
+        for dataset in self.datasets:
+            indices = list(range(start, start + len(dataset)))
+            stock_indices.append(indices)
+            start += len(dataset)
+        return stock_indices
