@@ -77,7 +77,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
     def train(self, setting):
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
-        test_data, test_loader = self._get_data(flag='test')
+        # test_data, test_loader = self._get_data(flag='test')
 
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
@@ -152,11 +152,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             mlflow.log_metric("train_loss", train_loss, step=epoch)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             mlflow.log_metric("vali_loss", vali_loss, step=epoch)
-            test_loss = self.vali(test_data, test_loader, criterion)
-            mlflow.log_metric("test_loss", test_loss, step=epoch)
+            # test_loss = self.vali(test_data, test_loader, criterion)
+            # mlflow.log_metric("test_loss", test_loss, step=epoch)
 
-            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
-                epoch + 1, train_steps, train_loss, vali_loss, test_loss))
+            # print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
+            #     epoch + 1, train_steps, train_loss, vali_loss, test_loss))
+
+            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f}".format(
+                epoch + 1, train_steps, train_loss, vali_loss))
+
             early_stopping(vali_loss, self.model, path)
             if early_stopping.early_stop:
                 print("Early stopping")
@@ -168,15 +172,16 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         self.model.load_state_dict(torch.load(best_model_path))
 
         return self.model
-
+    
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
-
+        input = []
         preds = []
         trues = []
+        x_enc_shape, x_mark_enc_shape, x_dec_shape, x_mark_dec_shape = None, None, None, None
         folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -193,6 +198,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                if x_enc_shape is None:
+                    x_enc_shape = batch_x.shape
+                    x_mark_enc_shape = batch_x_mark.shape # dummy
+                    x_dec_shape = dec_inp.shape
+                    x_mark_dec_shape = batch_y_mark.shape # dummy
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
@@ -205,12 +215,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
                 outputs = outputs.detach().cpu().numpy()
                 batch_y = batch_y.detach().cpu().numpy()
-                if test_data.scale and self.args.inverse:
-                    shape = batch_y.shape
-                    if outputs.shape[-1] != batch_y.shape[-1]:
-                        outputs = np.tile(outputs, [1, 1, int(batch_y.shape[-1] / outputs.shape[-1])])
-                    outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                    batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                # if test_data.scale and self.args.inverse:
+                #     shape = batch_y.shape
+                #     if outputs.shape[-1] != batch_y.shape[-1]:
+                #         outputs = np.tile(outputs, [1, 1, int(batch_y.shape[-1] / outputs.shape[-1])])
+                #     outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                #     batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
 
                 outputs = outputs[:, :, f_dim:]
                 batch_y = batch_y[:, :, f_dim:]
@@ -222,9 +232,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 trues.append(true)
                 if i % 20 == 0:
                     input = batch_x.detach().cpu().numpy()
-                    if test_data.scale and self.args.inverse:
-                        shape = input.shape
-                        input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                    # if test_data.scale and self.args.inverse:
+                    #     shape = input.shape
+                    #     input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
                     gt = np.concatenate((input[0, :, -1], true[0, :, -1]), axis=0)
                     pd = np.concatenate((input[0, :, -1], pred[0, :, -1]), axis=0)
                     visual(gt, pd, os.path.join(folder_path, str(i) + '.png'))
@@ -271,5 +281,32 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
+        #### ONNX 파일 추출
+        # dummy input 생성
+        x_enc = torch.randn(*x_enc_shape).to(self.device)
+        x_mark_enc = torch.randn(* x_mark_enc_shape).to(self.device)
+        x_dec = torch.randn(* x_dec_shape).to(self.device)
+        x_mark_dec = torch.randn(* x_mark_dec_shape).to(self.device)
 
+        print("x_enc_shape:", x_enc_shape)
+        print("x_mark_enc_shape:", x_mark_enc_shape)
+        print("x_dec_shape:", x_dec_shape) 
+        print("x_mark_dec_shape:", x_mark_dec_shape)
+
+        torch.onnx.export(self.model, 
+                          (x_enc, x_mark_enc, x_dec, x_mark_dec), 
+                          os.path.join('./checkpoints/' + setting, 'checkpoint_onnx.onnx'), 
+                          input_names=['x_enc', 'x_mark_enc', 'x_dec', 'x_mark_dec'],
+                          output_names=['output'],
+                          opset_version=14,  # ONNX 버전
+                          export_params=True,        # 모델 파일 안에 학습된 모델 가중치를 저장할지의 여부
+                          do_constant_folding=True,  # 최적화시 상수폴딩을 사용할지의 여부
+                          dynamic_axes={
+                              'x_enc': {0: 'batch_size', 1: 'seq_len_enc'},
+                              'x_mark_enc': {0: 'batch_size', 1: 'seq_len_enc'},
+                              'x_dec': {0: 'batch_size', 1: 'seq_len_dec'},
+                              'x_mark_dec': {0: 'batch_size', 1: 'seq_len_dec'},
+                              'output': {0: 'batch_size', 1: 'seq_len_dec'}
+                          },
+                          verbose=True)
         return
