@@ -30,7 +30,7 @@ def data_provider(args, flag):
 
     shuffle_flag = False if (flag == 'test' or flag == 'TEST') else True
     drop_last = False
-    batch_size = args.batch_size
+    batch_size = 1 if (flag == 'test' or flag == 'TEST') else args.batch_size
     freq = args.freq
 
     if args.task_name == 'anomaly_detection':

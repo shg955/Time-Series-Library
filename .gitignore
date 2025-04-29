@@ -166,3 +166,10 @@ result_anomaly_detection.txt
 scripts/augmentation/
 run_anylearn.py
 environment.txt
+
+/runs/
+/mse_results/
+/log/
+
+*.ipynb
+nohup.out
