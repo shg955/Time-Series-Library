@@ -1,0 +1,42 @@
+** 실행 전 수정 부분 **
+[run.py]
+
+0. fix_seed = 2021 # 모델에 따라 random seed 변경 필요
+
+1. 재현실험 : position_setting 설정 (False, False, True)
+1-1. 가중치 X embedding에만 적용 : position_setting 설정 (True, False, True)
+-> 현재 git에 올린 그 상태로 수정 없이 nohup python -u run.py ~ 작성하셔서 돌리시면 됩니다.
+
+
+2. 가중치 O embedding에만 적용
+- position_setting 설정 (True, False, True)
+
+- 아래 모두 주석 해제
+# args.position_embedding_weight = True
+
+# args.model_id = args.model_id + f'_weight_{args.pe_weight}' if args.position_embedding_weight else args.model_id
+# args.model_id = args.model_id + f'_{func}' if func != 'identity' else args.model_id
+
+# for position_weights in [0.1]: # 원하는 weight 값으로 설정
+#     args.pe_weight = position_weights
+
+#     for func in ['identity']: # 활성화 함수 필요 시 identity외 추가 설정
+#         args.pe_weight_activation = activation_map[func] # !!! 바로 아래 코드부터 끝까지 들여쓰기 필요
+          
+          for feature_mode in ['M']: # func 반복문 안으로 모두 넣어주시면 됩니다
+
+
+
+** 실행 방법 **
+
+CUDA_VISIBLE_DEVICES=1
+nohup python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset weather \
+  --name TimeXer_embedding_weather \
+  > /data/pcw_workspace/Time-Series-Library/log/TimeXer/weather/log_posiemb.txt &
+
+저부분에서 model, dataset, name(ps -ef용)만 변경하시면 되고
+필요하시면 log 폴더 하위에 log 남을 수 있게 위치 수정해주시면 됩니다.
+(/data/pcw_workspace/Time-Series-Library/scripts/emb_pro/TimeXer_emb_pro_empr.txt 참고)
