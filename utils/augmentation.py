@@ -1,5 +1,6 @@
 import numpy as np
 from tqdm import tqdm
+import torch
 
 def jitter(x, sigma=0.03):
     # https://arxiv.org/pdf/1706.00527.pdf
@@ -382,6 +383,68 @@ def run_augmentation_single(x, y, args):
         x_aug = x_aug.squeeze(0)
     return x_aug, y_aug, augmentation_tags
 
+def surrogates(x, ns, tol_pc=5., verbose=True, maxiter=1E6, sorttype="quicksort"):
+        nx = x.shape[0]
+        # nx seq_len
+        xs = np.zeros((ns, nx)) # xs shape (ns, seq_len)
+        maxiter = 100000
+        ii = np.arange(nx) # seq_len만큼 배열 생성
+
+        # fft 결과 진폭만 추출 복소수 -> 절댓값
+        x_amp = np.abs(np.fft.fft(x)) # (96,)
+
+        # 원본 시계열 데이터 sort
+        x_srt = np.sort(x) # (96,)
+
+        # 원본 시계열 데이터 정렬한 인덱스 값
+        r_orig = np.argsort(x) # torch.Size([96])
+
+        # 값을 정렬한 후, 정렬된 인덱스를 반환
+
+        # loop over surrogate number
+        # 출력 형식 정의
+        pb_fmt = "{desc:<5.5}{percentage:3.0f}%|{bar:30}{r_bar}"
+        
+        # 진행 상태 설명
+        pb_desc = "Estimating IAAFT surrogates ..."
+
+        for k in tqdm(range(ns), bar_format=pb_fmt, desc=pb_desc,
+                    disable=not verbose):
+            # ns만큼 서지게이트 생성
+
+            # 1) Generate random shuffle of the data
+            # 데이터 shuffle
+            count = 0
+            r_prev = np.random.permutation(ii) # 인덱스를 섞은 배열
+            r_curr = r_orig # 원본 데이터의 정렬된 인덱스
+            z_n = x[r_prev] # r_prev 사용해서 데이터를 섞어 z_n 생성
+            percent_unequal = 100.
+
+            # core iterative loop
+            while (percent_unequal > tol_pc) and (count < maxiter):
+                r_prev = r_curr
+
+                # FFT와 위상 조정
+                y_prev = z_n
+                fft_prev = np.fft.fft(y_prev) # 섞은 데이터로 fft 수행
+                phi_prev = np.angle(fft_prev) # fft 수행 후 위상 추출
+                e_i_phi = np.exp(phi_prev * 1j) # 복소수 벡터 계산
+                # e_i_phi는 위상 랜덤하기 위해서 사용됨
+                z_n = np.fft.ifft(x_amp * e_i_phi) # 위상 조정하여 ifft 수행
+
+                # 분포 재조정
+                r_curr = np.argsort(z_n, kind=sorttype) # z_n의 정렬된 인덱스 계산
+                z_n[r_curr] = x_srt.copy() # 원본 데이터와 동일한 분포를 가지도록 함
+                percent_unequal = ((r_curr != r_prev).sum() * 100.) / nx # 불일치 비율이 허용 오차보다 작아지면 반복 종료
+
+                count += 1
+
+            # 반복 횟수 초과되면 종료
+            if count >= maxiter:
+                print("maximum number of iterations reached!")
+
+            xs[k] = np.real(z_n)
+        return xs
 
 def augment(x, y, args):
     import utils.augmentation as aug
@@ -431,4 +494,19 @@ def augment(x, y, args):
     if args.discsdtw:
         x = aug.discriminative_guided_warp_shape(x, y)
         augmentation_tags += "_dgws"
+    if args.iaaft:
+        x_aug = []
+        for i in range(x.shape[0]):  # batch
+            sample = x[i]  # (seq_len, dim)
+            new_sample = []
+            for d in range(sample.shape[1]):  # feature 단위로 iAAFT 수행
+                surrogate = surrogates(sample[:, d], ns=1, verbose=False)[0]
+                # surrogate.shape (90,)
+                new_sample.append(surrogate)
+            new_sample = np.stack(new_sample, axis=1)
+            x_aug.append(new_sample)
+            # x_aug last shape: {x_aug[-1].shape} (90,12)
+        x = np.stack(x_aug, axis=0)
+        # x.shape (1, 90, 12)
+        augmentation_tags += "_iaaft"
     return x, augmentation_tags

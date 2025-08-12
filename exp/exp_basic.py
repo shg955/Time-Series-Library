@@ -3,7 +3,7 @@ import torch
 from models import Autoformer, Transformer, TimesNet, Nonstationary_Transformer, DLinear, FEDformer, \
     Informer, LightTS, Reformer, ETSformer, Pyraformer, PatchTST, MICN, Crossformer, FiLM, iTransformer, \
     Koopa, TiDE, FreTS, TimeMixer, TSMixer, SegRNN, MambaSimple, TemporalFusionTransformer, SCINet, PAttn, TimeXer, \
-    WPMixer, MultiPatchFormer
+    WPMixer, MultiPatchFormer, DeformableTST
 import glob
 
 from torch.utils.tensorboard import SummaryWriter
@@ -17,13 +17,13 @@ class Exp_Basic(object):
             # 'Autoformer': Autoformer,
             # 'Transformer': Transformer,
             # 'Nonstationary_Transformer': Nonstationary_Transformer,
-            # 'DLinear': DLinear,
-            'FEDformer': FEDformer,
+            'DLinear': DLinear,
+            # 'FEDformer': FEDformer,
             # 'Informer': Informer,
             # 'LightTS': LightTS,
             # 'Reformer': Reformer,
             # 'ETSformer': ETSformer,
-            # 'PatchTST': PatchTST,
+            'PatchTST': PatchTST,
             # 'Pyraformer': Pyraformer,
             # 'MICN': MICN,
             # 'Crossformer': Crossformer,
@@ -40,8 +40,9 @@ class Exp_Basic(object):
             # "SCINet": SCINet,
             # 'PAttn': PAttn,
             'TimeXer': TimeXer,
-            'WPMixer': WPMixer,
+            # 'WPMixer': WPMixer,
             # 'MultiPatchFormer': MultiPatchFormer
+            # 'DeformableTST': DeformableTST
         }
         if args.model == 'Mamba':
             print('Please make sure you have successfully installed mamba_ssm')
@@ -51,9 +52,41 @@ class Exp_Basic(object):
         self.device = self._acquire_device()
         self.model = self._build_model().to(self.device)
 
-        self.writer = SummaryWriter(
-            log_dir=f"/data/pcw_workspace/Time-Series-Library/runs/{args.model}/{args.model_id}/"
-        )
+        if args.is_training == 1 and args.is_tsne_emb == False:
+            if args.task_name == 'long_term_forecast' :
+                self.writer = SummaryWriter(
+                    log_dir=f"/data/pcw_workspace/Time-Series-Library/runs/{args.model}/{args.model_id}/"
+                )
+            if args.task_name == 'paper' :
+
+                suffix = ""
+                runs_folder = "runs_public"
+
+                if args.reconstruction:
+                    suffix = "_recon_ps" if args.use_ps_loss else "_recon"
+                    runs_folder = "runs_public_recon"
+                elif args.use_ps_loss:
+                    suffix = "_ps" if args.use_ps_loss else ""
+                    runs_folder = "runs_public_recon"
+                elif args.position_embedding_emb or args.position_embedding_proj:
+                    suffix = "_posiemb"
+                    if args.position_embedding_weight:
+                        suffix += "_weight"
+                    runs_folder = "runs_public_embed"
+                elif args.position_encoding_emb or args.position_encoding_proj:
+                    suffix = "_posienc"
+                    runs_folder = "runs_public_embed"
+                elif args.channelwise_embedding or args.channelwise_projection:
+                    suffix = "_channelwise"
+                    runs_folder = "runs_public_embed"
+
+                log_dir = os.path.join(
+                    f"/data/pcw_workspace/Time-Series-Library/{runs_folder}",
+                    args.model,
+                    f"{args.dataset}{suffix}",
+                    args.model_id
+                )
+                self.writer = SummaryWriter(log_dir=log_dir)
 
     def _build_model(self):
         raise NotImplementedError

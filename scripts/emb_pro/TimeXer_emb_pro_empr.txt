@@ -1,0 +1,65 @@
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset weather \
+  --name TimeXer_embedding_weather \
+  > /data/pcw_workspace/Time-Series-Library/log/TimeXer/weather/log_posiemb.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset exchange_rate \
+  --name TimeXer_embedding_exchange_rate \
+  > /data/pcw_workspace/Time-Series-Library/log/TimeXer/exchange_rate/log_posiemb.txt &
+
+ ---
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset ETTh1 \
+  --name TimeXer_embedding_ETTh1 \
+  > /data/pcw_workspace/Time-Series-Library/log/TimeXer/ETTh1/log_posiemb.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset ETTh2 \
+  --name TimeXer_embedding_ETTh2 \
+  > /data/pcw_workspace/Time-Series-Library/log/TimeXer/ETTh2/log_posiemb.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset ETTm1 \
+  --name TimeXer_embedding_ETTm1 \
+  > /data/pcw_workspace/Time-Series-Library/log/TimeXer/ETTm1/log_posiemb.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset ETTm2 \
+  --name TimeXer_embedding_ETTm2 \
+  > /data/pcw_workspace/Time-Series-Library/log/TimeXer/ETTm2/log_posiemb.txt &
+
+--
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset ECL \
+  --name TimeXer_embedding_ECL \
+  > /data/pcw_workspace/Time-Series-Library/log/TimeXer/ECL/log_posiemb.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset traffic \
+  --name TimeXer_embedding_traffic \
+  > /data/pcw_workspace/Time-Series-Library/log/TimeXer/traffic/log_posiemb.txt &
+
+
+CUDA_VISIBLE_DEVICES=1 python -u run.py \
+  --is_training 1 \
+  --model TimeXer \
+  --dataset ETTh2 \
+  --name TimeXer_position_embedding_ETTh2

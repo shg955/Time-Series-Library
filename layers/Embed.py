@@ -10,20 +10,20 @@ class PositionalEmbedding(nn.Module):
         super(PositionalEmbedding, self).__init__()
         # Compute the positional encodings once in log space.
         pe = torch.zeros(max_len, d_model).float()
-        pe.require_grad = False
+        pe.requires_grad = False
 
         position = torch.arange(0, max_len).float().unsqueeze(1)
         div_term = (torch.arange(0, d_model, 2).float()
                     * -(math.log(10000.0) / d_model)).exp()
 
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe[:, 0::2] = torch.sin(position * div_term) # 짝수 인덱스
+        pe[:, 1::2] = torch.cos(position * div_term) # 홀수 인덱스
 
         pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        return self.pe[:, :x.size(1)]
+        return self.pe[:, :x.size(1)].to(x.device)
 
 
 class TokenEmbedding(nn.Module):
@@ -121,8 +121,11 @@ class DataEmbedding(nn.Module):
         if x_mark is None:
             x = self.value_embedding(x) + self.position_embedding(x)
         else:
-            x = self.value_embedding(
-                x) + self.temporal_embedding(x_mark) + self.position_embedding(x)
+            # x shape ([batch, seq_len, feature])
+            # x.mark shape ([batch, seq_len, 3(date정보)])
+            # position_embedding(x) ([1, seq_len, 512])
+            x = self.value_embedding(x) + self.temporal_embedding(x_mark) + self.position_embedding(x)
+            # x shape ([batch, seq_len, 512])
         return self.dropout(x)
 
 
@@ -134,11 +137,15 @@ class DataEmbedding_inverted(nn.Module):
 
     def forward(self, x, x_mark):
         x = x.permute(0, 2, 1)
+        # x shape torch.Size([1, 7, 96])
+        # x_mark shape torch.Size([1, 96, 3])
+
         # x: [Batch Variate Time]
         if x_mark is None:
             x = self.value_embedding(x)
         else:
             x = self.value_embedding(torch.cat([x, x_mark.permute(0, 2, 1)], 1))
+            # x shaep torch.Size([1, 10, 128])
         # x: [Batch Variate d_model]
         return self.dropout(x)
 

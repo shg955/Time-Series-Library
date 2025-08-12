@@ -6,10 +6,10 @@ from data_provider.stock_sampler import StockSampler
 
 data_dict = {
     "SNP500": Dataset_SNP500,
-    # 'ETTh1': Dataset_ETT_hour,
-    # 'ETTh2': Dataset_ETT_hour,
-    # 'ETTm1': Dataset_ETT_minute,
-    # 'ETTm2': Dataset_ETT_minute,
+    'ETTh1': Dataset_ETT_hour,
+    'ETTh2': Dataset_ETT_hour,
+    'ETTm1': Dataset_ETT_minute,
+    'ETTm2': Dataset_ETT_minute,
     'custom': Dataset_Custom,
     # 'm4': Dataset_M4,
     # 'PSM': PSMSegLoader,
@@ -66,13 +66,32 @@ def data_provider(args, flag):
             collate_fn=lambda x: collate_fn(x, max_len=args.seq_len)
         )
         return data_set, data_loader
+    elif args.task_name == 'paper':
+        data_set = Data(
+            args = args,
+            root_path=args.root_path,
+            data_path=args.data_path,
+            flag=flag,
+            size=[args.seq_len, args.label_len, args.pred_len],
+            features=args.features,
+            target=args.target,
+            timeenc=timeenc,
+            freq=freq,
+        )
+        print(flag, len(data_set))
+        data_loader = DataLoader(
+            data_set,
+            batch_size=batch_size,
+            shuffle=shuffle_flag,
+            num_workers=args.num_workers,
+            # pin_memory=True,
+            drop_last=drop_last)
     else:
         if args.data == 'm4':
             drop_last = False
         data_set = Data(
             args = args,
             root_path=args.root_path,
-            # data_path=args.data_path,
             flag=flag,
             size=[args.seq_len, args.label_len, args.pred_len],
             features=args.features,
@@ -94,4 +113,4 @@ def data_provider(args, flag):
         )
         # sampler랑 shuffle 동시에 사용X
         
-        return data_set, data_loader
+    return data_set, data_loader

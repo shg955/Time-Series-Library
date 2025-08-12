@@ -4,11 +4,11 @@ model_name=iTransformer
 
 python -u run.py \
   --task_name long_term_forecast \
-  --is_training 1 \
-  --root_path ./dataset/traffic/ \
+  --is_training 0 \
+  --root_path /data/pcw_workspace/Time-Series-Library/dataset/traffic/ \
   --data_path traffic.csv \
   --model_id traffic_96_96 \
-  --model $model_name \
+  --model iTransformer \
   --data custom \
   --features M \
   --seq_len 96 \

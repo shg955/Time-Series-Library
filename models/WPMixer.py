@@ -151,6 +151,7 @@ class ResolutionBranch(nn.Module):
         '''
 
         x_patch = self.do_patching(x)
+        # x_patch.shape ([1024, 12, 6, 16])
         x_patch = self.patch_norm(x_patch)
         x_emb = self.dropoutLayer(self.patch_embedding_layer(x_patch))
 
@@ -270,7 +271,9 @@ class WPMixerCore(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, args, tfactor=5, dfactor=5, wavelet='db2', level=1, stride=8, no_decomposition=False):
+    def __init__(self, args, tfactor=5, dfactor=5, wavelet='coif4', level=4, stride=8, no_decomposition=False):
+        # db2, db3_3, coif4_4, sym3(비교)
+        # default wavelet='db2', level=1
         super(Model, self).__init__()
         self.args = args
         self.task_name = args.task_name

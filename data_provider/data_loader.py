@@ -11,7 +11,7 @@ from data_provider.m4 import M4Dataset, M4Meta
 from data_provider.uea import subsample, interpolate_missing, Normalizer
 from sktime.datasets import load_from_tsfile_to_dataframe
 import warnings
-from utils.augmentation import run_augmentation_single
+from utils.augmentation import run_augmentation_single, augment
 from tqdm import tqdm
 
 warnings.filterwarnings('ignore')
@@ -20,7 +20,7 @@ class Dataset_SNP500(Dataset):
     def __init__(self, args, root_path, flag='train', size=None,
                  features='M', target='Close', scale=True, timeenc=0, freq='D', seasonal_patterns=None):
         # size [seq_len, label_len, pred_len]
-        
+
         self.args = args
         # info
         if size == None:
@@ -203,20 +203,38 @@ class Dataset_SNP500(Dataset):
             self.date_array = np.concatenate([item[2] for item in self.all_data], axis=0)
         self.data_y = self.data_x
 
-        ####
-        if self.set_type == 0 and self.args.augmentation_ratio > 0:
-            self.data_x, self.data_y, augmentation_tags = run_augmentation_single(self.data_x, self.data_y, self.args)
-
     def __getitem__(self, index):
         stock_name, s_begin = index
         s_end = s_begin + self.seq_len
         r_begin = s_end - self.label_len
         r_end = r_begin + self.label_len + self.pred_len
 
-        seq_x = torch.from_numpy(self.data_x[s_begin:s_end])  # 90
-        seq_y = torch.from_numpy(self.data_y[r_begin:r_end])  # 135
-        seq_x_mark = torch.from_numpy(self.data_stamp[s_begin:s_end])
-        seq_y_mark = torch.from_numpy(self.data_stamp[r_begin:r_end])
+        seq_x = self.data_x[s_begin:s_end]  # 90
+        seq_y = self.data_y[r_begin:r_end]  # 135
+        seq_x_mark = self.data_stamp[s_begin:s_end]
+        seq_y_mark = self.data_stamp[r_begin:r_end]
+        
+        # train일때만, prob 확률로 augmentation 적용
+        if (
+            self.set_type == 0 and 
+            np.random.rand() < self.args.augmentation_prob
+        ):  
+            # 제일 처음에 배치 차원 추가해서 차원 맞춰주고
+            seq_x_batch = seq_x[np.newaxis, :, :]
+            # seq_x_batch : (1, seq_len, 12)
+            
+            seq_x_aug, tag = augment(seq_x_batch, seq_y[np.newaxis, :, :], self.args)
+            # seq_x_aug : (1, seq_len, 12)
+
+            # 다시 처음 seq_x 차원과 맞춰줌
+            seq_x = seq_x_aug[0]
+            # seq_x : (seq_len, 12)
+
+        # Tensor 변환
+        seq_x = torch.from_numpy(seq_x)
+        seq_y = torch.from_numpy(seq_y)
+        seq_x_mark = torch.from_numpy(seq_x_mark)
+        seq_y_mark = torch.from_numpy(seq_y_mark)
 
         if self.set_type == 2 and self.timeenc == 1:
         # test할때 사용할 date 정보
@@ -225,6 +243,10 @@ class Dataset_SNP500(Dataset):
             return seq_x, seq_y, seq_x_mark, seq_y_mark, stock_name, list(seq_x_dates), list(seq_y_dates)
         
         return seq_x, seq_y, seq_x_mark, seq_y_mark, stock_name
+
+    def generative_data(self, ):
+
+        return
 
         # # stft
         # # S, C -> S, 3C로 변경
@@ -319,6 +341,7 @@ class Dataset_ETT_hour(Dataset):
         border2 = border2s[self.set_type]
 
         if self.features == 'M' or self.features == 'MS':
+            # 마지막 target feature 제외
             cols_data = df_raw.columns[1:]
             df_data = df_raw[cols_data]
         elif self.features == 'S':
@@ -332,7 +355,9 @@ class Dataset_ETT_hour(Dataset):
             data = df_data.values
 
         df_stamp = df_raw[['date']][border1:border2]
-        df_stamp['date'] = pd.to_datetime(df_stamp.date)
+        df_stamp['date'] = pd.to_datetime(df_stamp['date'])
+        self.date_array = df_stamp['date'].dt.strftime('%Y-%m-%d').values
+
         if self.timeenc == 0:
             df_stamp['month'] = df_stamp.date.apply(lambda row: row.month, 1)
             df_stamp['day'] = df_stamp.date.apply(lambda row: row.day, 1)
@@ -341,7 +366,7 @@ class Dataset_ETT_hour(Dataset):
             data_stamp = df_stamp.drop(['date'], 1).values
         elif self.timeenc == 1:
             data_stamp = time_features(pd.to_datetime(df_stamp['date'].values), freq=self.freq)
-            data_stamp = data_stamp.transpose(1, 0) 
+            data_stamp = data_stamp.transpose(1, 0)
 
         self.data_x = data[border1:border2]
         self.data_y = data[border1:border2]
@@ -361,6 +386,12 @@ class Dataset_ETT_hour(Dataset):
         seq_y = self.data_y[r_begin:r_end]
         seq_x_mark = self.data_stamp[s_begin:s_end]
         seq_y_mark = self.data_stamp[r_begin:r_end]
+
+        if self.set_type == 2 and self.timeenc == 1:
+        # test할때 사용할 date 정보
+            seq_x_dates = self.date_array[s_begin:s_end]
+            seq_y_dates = self.date_array[r_begin:r_end]
+            return seq_x, seq_y, seq_x_mark, seq_y_mark, list(seq_x_dates), list(seq_y_dates)
 
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
@@ -426,6 +457,8 @@ class Dataset_ETT_minute(Dataset):
 
         df_stamp = df_raw[['date']][border1:border2]
         df_stamp['date'] = pd.to_datetime(df_stamp.date)
+        self.date_array = df_stamp['date'].dt.strftime('%Y-%m-%d').values
+
         if self.timeenc == 0:
             df_stamp['month'] = df_stamp.date.apply(lambda row: row.month, 1)
             df_stamp['day'] = df_stamp.date.apply(lambda row: row.day, 1)
@@ -456,6 +489,12 @@ class Dataset_ETT_minute(Dataset):
         seq_y = self.data_y[r_begin:r_end]
         seq_x_mark = self.data_stamp[s_begin:s_end]
         seq_y_mark = self.data_stamp[r_begin:r_end]
+
+        if self.set_type == 2 and self.timeenc == 1:
+        # test할때 사용할 date 정보
+            seq_x_dates = self.date_array[s_begin:s_end]
+            seq_y_dates = self.date_array[r_begin:r_end]
+            return seq_x, seq_y, seq_x_mark, seq_y_mark, list(seq_x_dates), list(seq_y_dates)
 
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
@@ -517,6 +556,7 @@ class Dataset_Custom(Dataset):
         border2 = border2s[self.set_type]
 
         if self.features == 'M' or self.features == 'MS':
+            # 마지막 target feature 제외
             cols_data = df_raw.columns[1:]
             df_data = df_raw[cols_data]
         elif self.features == 'S':
@@ -530,7 +570,9 @@ class Dataset_Custom(Dataset):
             data = df_data.values
 
         df_stamp = df_raw[['date']][border1:border2]
-        df_stamp['date'] = pd.to_datetime(df_stamp.date)
+        df_stamp['date'] = pd.to_datetime(df_stamp['date'])
+        self.date_array = df_stamp['date'].dt.strftime('%Y-%m-%d').values
+
         if self.timeenc == 0:
             df_stamp['month'] = df_stamp.date.apply(lambda row: row.month, 1)
             df_stamp['day'] = df_stamp.date.apply(lambda row: row.day, 1)
@@ -559,6 +601,12 @@ class Dataset_Custom(Dataset):
         seq_y = self.data_y[r_begin:r_end]
         seq_x_mark = self.data_stamp[s_begin:s_end]
         seq_y_mark = self.data_stamp[r_begin:r_end]
+
+        if self.set_type == 2 and self.timeenc == 1:
+        # test할때 사용할 date 정보
+            seq_x_dates = self.date_array[s_begin:s_end]
+            seq_y_dates = self.date_array[r_begin:r_end]
+            return seq_x, seq_y, seq_x_mark, seq_y_mark, list(seq_x_dates), list(seq_y_dates)
 
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 

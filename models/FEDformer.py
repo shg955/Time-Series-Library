@@ -119,12 +119,21 @@ class Model(nn.Module):
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         # decomp init
         mean = torch.mean(x_enc, dim=1).unsqueeze(1).repeat(1, self.pred_len, 1)
+        # mean.shape ([batch, pred_len, feature]) 
         seasonal_init, trend_init = self.decomp(x_enc)  # x - moving_avg, moving_avg
+        # seasonal, trend init ([batch, seq_len, feature])
+
         # decoder input
         trend_init = torch.cat([trend_init[:, -self.label_len:, :], mean], dim=1)
         seasonal_init = F.pad(seasonal_init[:, -self.label_len:, :], (0, 0, 0, self.pred_len))
+        # seasonal, trend init ([batch, seq_len + pred_len, feature])
+
+        # x_enc shape ([batch, seq_len, feature])
+        # x_mark_enc shape ([batch, seq_len, date(3)])
+
         # enc
         enc_out = self.enc_embedding(x_enc, x_mark_enc)
+        # enc_out ([batch, seq_len, 512])
         dec_out = self.dec_embedding(seasonal_init, x_mark_dec)
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
         # dec

@@ -59,6 +59,8 @@ class FullAttention(nn.Module):
         scale = self.scale or 1. / sqrt(E)
 
         scores = torch.einsum("blhe,bshe->bhls", queries, keys)
+        # queries.shape = torch.Size([32, feature, n_heads, 16])
+        # scores.shape = torch.Size([32, n_heads, queries, keys])
 
         if self.mask_flag:
             if attn_mask is None:
@@ -200,7 +202,9 @@ class AttentionLayer(nn.Module):
         keys = self.key_projection(keys).view(B, S, H, -1)
         values = self.value_projection(values).view(B, S, H, -1)
 
-        out, attn = self.inner_attention(
+        # queries.shape = torch.Size([32, feature, n_heads, 16])
+
+        out, attns = self.inner_attention(
             queries,
             keys,
             values,
@@ -210,7 +214,7 @@ class AttentionLayer(nn.Module):
         )
         out = out.view(B, L, -1)
 
-        return self.out_projection(out), attn
+        return self.out_projection(out), attns
 
 
 class ReformerLayer(nn.Module):

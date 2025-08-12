@@ -20,7 +20,6 @@ class FlattenHead(nn.Module):
         x = self.dropout(x)
         return x
 
-
 class EnEmbedding(nn.Module):
     def __init__(self, n_vars, d_model, patch_len, dropout):
         super(EnEmbedding, self).__init__()
@@ -36,13 +35,18 @@ class EnEmbedding(nn.Module):
     def forward(self, x):
         # do patching
         n_vars = x.shape[1]
+
+        # 각 변수마다 하나의 global token 추가
         glb = self.glb_token.repeat((x.shape[0], 1, 1, 1))
 
+        # input을 patch_len 단위로 잘라냄 (non overlap)
         x = x.unfold(dimension=-1, size=self.patch_len, step=self.patch_len)
         x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
         # Input encoding
         x = self.value_embedding(x) + self.position_embedding(x)
         x = torch.reshape(x, (-1, n_vars, x.shape[-2], x.shape[-1]))
+
+        # patch, global token cat
         x = torch.cat([x, glb], dim=2)
         x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
         return self.dropout(x), n_vars
@@ -115,6 +119,7 @@ class Model(nn.Module):
 
     def __init__(self, configs):
         super(Model, self).__init__()
+        self.configs = configs
         self.task_name = configs.task_name
         self.features = configs.features
         self.seq_len = configs.seq_len
@@ -122,7 +127,21 @@ class Model(nn.Module):
         self.use_norm = configs.use_norm
         self.patch_len = configs.patch_len
         self.patch_num = int(configs.seq_len // configs.patch_len)
-        self.n_vars = 1 if configs.features == 'MS' else configs.enc_in
+        self.n_vars = 1 if configs.features == 'MS' else configs.enc_in  # feature (date X)
+        self.pe_activation = configs.pe_weight_activation
+
+        # positional embedding
+        if configs.use_separate:
+            if configs.position_embedding_emb:
+                self.position_embedding_em = nn.Parameter(torch.randn(self.n_vars, configs.d_model)) # (feature (date X), D)
+
+        # positional embedding weight
+        if configs.position_embedding_weight:
+            if configs.use_separate:
+                if configs.each_weight:
+                    self.pe_em_weight = nn.Parameter(torch.full((self.n_vars, 1), configs.pe_weight)) # (feature (date X), 1)
+                    # torch.full(size, value) : 지정한 크기의 텐서 만들고, 모든 원소를 같은 값으로 채움
+
         # Embedding
         self.en_embedding = EnEmbedding(self.n_vars, configs.d_model, self.patch_len, configs.dropout)
 
@@ -135,11 +154,11 @@ class Model(nn.Module):
                 EncoderLayer(
                     AttentionLayer(
                         FullAttention(False, configs.factor, attention_dropout=configs.dropout,
-                                      output_attention=False),
+                                      output_attention=True),
                         configs.d_model, configs.n_heads),
                     AttentionLayer(
                         FullAttention(False, configs.factor, attention_dropout=configs.dropout,
-                                      output_attention=False),
+                                      output_attention=True),
                         configs.d_model, configs.n_heads),
                     configs.d_model,
                     configs.d_ff,
@@ -192,12 +211,42 @@ class Model(nn.Module):
             stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
             x_enc /= stdev
 
-        _, _, N = x_enc.shape
+        B, _, N = x_enc.shape
+        # x_enc.shape (batch_size, seq_len, feature(date X))
 
         en_embed, n_vars = self.en_embedding(x_enc.permute(0, 2, 1))
         ex_embed = self.ex_embedding(x_enc, x_mark_enc)
 
+        # en_embed.shape torch.Size([batch size * feature(date X), patch + glb , d_model])
+        # ex_embed.shape torch.Size([batch size, feature+date, d_model])
+
+        before_position_embedding_emb = en_embed.clone().detach()
+        
+        # position embedding embedding 이후
+        if self.configs.position_embedding_emb:
+            if self.configs.use_separate:
+                var_ids = torch.arange(n_vars, device=en_embed.device).unsqueeze(0).repeat(B, 1).reshape(-1)
+                # var_ids.shape (batch_size*feature(date X))
+                pe = self.position_embedding_em[var_ids]
+                # pe.shape (batch_size*feature(date X), d_model)
+                if self.configs.position_embedding_weight:
+                    # self.pe_em_weight.shape (feature (date X), 1)
+                    weights = self.pe_activation(self.pe_em_weight.squeeze(-1))
+                    # weights.shape (feature(date X))
+                    weights = weights[var_ids].unsqueeze(-1)
+                    # weights.shape (batch_size*feature(date X), 1)
+                    pe = weights * pe
+                    # pe.shape (batch_size * feature(date X), d_model)
+            # en_embed.shape (batch_size * feature(date X), patch+glb, d_model)
+            en_embed = en_embed + pe.unsqueeze(1).expand(-1, self.patch_num+1, -1)
+            # en_embed.shape (batch_size * feature(date X), patch+glb, d_model)
+            after_position_embedding_emb = en_embed.clone().detach()
+        else:
+            after_position_embedding_emb = None
+
         enc_out = self.encoder(en_embed, ex_embed)
+        attns = None
+
         enc_out = torch.reshape(
             enc_out, (-1, n_vars, enc_out.shape[-2], enc_out.shape[-1]))
         # z: [bs x nvars x d_model x patch_num]
@@ -211,15 +260,32 @@ class Model(nn.Module):
             dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
             dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
 
-        return dec_out
+        # if self.configs.is_tsne_emb:
+        #     if self.configs.position_encoding_emb or self.configs.position_encoding_proj:
+        #         embeddings = (before_position_encoding_emb,
+        #                 after_position_encoding_emb,
+        #                 before_position_encoding_proj,
+        #                 after_position_encoding_proj)
+        #     else:
+        #         embeddings = (before_position_embedding_emb,
+        #                     after_position_embedding_emb,
+        #                     before_position_embedding_proj,
+        #                     after_position_embedding_proj)
+        # else:
+        embeddings = None
+        attns = None
+
+        return dec_out, attns, embeddings
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
+        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast' or self.task_name == 'paper':
             if self.features == 'M':
-                dec_out = self.forecast_multi(x_enc, x_mark_enc, x_dec, x_mark_dec)
-                return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+                dec_out, attns, embeddings = self.forecast_multi(x_enc, x_mark_enc, x_dec, x_mark_dec)
+                if self.configs.is_tsne_emb:
+                    return embeddings
+                return dec_out[:, -self.pred_len:, :], attns  # [B, L, D]
             else:
-                dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
-                return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+                dec_out, attns = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
+                return dec_out[:, -self.pred_len:, :], attns  # [B, L, D]
         else:
-            return None
+            return None#

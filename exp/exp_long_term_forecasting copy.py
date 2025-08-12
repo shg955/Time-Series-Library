@@ -1,6 +1,6 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
-from utils.tools import EarlyStopping, adjust_learning_rate, visual, visual_attention_matrix, visual_tsne
+from utils.tools import EarlyStopping, adjust_learning_rate, visual, visual_attention_matrix, save_embedding_tsv
 from utils.metrics import metric
 import torch
 import torch.nn as nn
@@ -61,45 +61,26 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 self.selected_columns = self.data_columns
             print(self.selected_columns)
 
-        # 저장 디렉토리 설정
-        self.suffix = ""
-        if self.args.reconstruction:
-            self.suffix = "_recon_ps" if self.args.use_ps_loss else "_recon"
-        elif self.args.use_ps_loss:
-            self.suffix = "_ps" if self.args.use_ps_loss else ""
-        elif self.args.position_embedding_emb or self.args.position_embedding_proj:
-            self.suffix = "_posiemb"
-            if args.position_embedding_weight:
-                self.suffix += "_weight"
-        elif self.args.position_encoding_emb or self.args.position_encoding_proj:
-            self.suffix = "_posienc"
-        elif self.args.channelwise_embedding or self.args.channelwise_projection:
-            self.suffix = "_channelwise"
-
         # 경로 설정
         self.checkpoint_dir = os.path.join(
-            f"/data/pcw_workspace/Time-Series-Library/checkpoints/{self.args.model}/{self.args.dataset}{self.suffix}/{self.args.model_id}/"
+            f"/data/pcw_workspace/Time-Series-Library/checkpoints/{self.args.model}/{self.args.dataset}/{self.args.model_id}/"
         )
+        
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+        # checkpoint 불러오기 (checkpoint_epoch_loss.pth 형식)
+        self.checkpoint_files = glob.glob(os.path.join(self.checkpoint_dir, "checkpoint*.pth"))
 
         if self.args.use_ps_loss:
             self.ps_loss_fn = PSLoss(self.model, self.args.patch_len_threshold)
-        
-        if self.args.is_tsne_emb:
-            if self.args.position_encoding_emb or self.args.position_encoding_proj:
-                self.embedding_keys = [
-                    "before_position_encoding_emb",
-                    "after_position_encoding_emb",
-                    "before_position_encoding_proj",
-                    "after_position_encoding_proj",
-                ]
-            else:
-                self.embedding_keys = [
-                    "before_position_embedding_emb",
-                    "after_position_embedding_emb",
-                    "before_position_embedding_proj",
-                    "after_position_embedding_proj",
-                ]
+
+        # if self.args.save_tsv:
+        #     self.embedding_keys = [
+        #         "before_position_embedding_emb",
+        #         "after_position_embedding_emb",
+        #         "before_position_embedding_proj",
+        #         "after_position_embedding_proj",
+        #     ]
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
@@ -133,21 +114,20 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print(f"summarize_only is True: {self.args.model_id}...")
 
         for flag in ["train", "val", "test"]:
-            stats = self.get_feature_losses(flag)
+            stats = self.feature_losses(flag)
             self.save_feature_loss_to_csv(stats, flag)
 
-    def get_feature_losses(self, flag):
-        checkpoint_paths = glob.glob(os.path.join(self.checkpoint_dir, "checkpoint*.pth"))
-        checkpoint_list = list(sorted(checkpoint_paths, key=lambda x: int(x.split('_')[-2])))
+    def feature_losses(self, flag):
+        self.checkpoint_files = glob.glob(os.path.join(self.checkpoint_dir, "checkpoint*.pth"))
 
-        if checkpoint_list:
-            best_ckpt_path = checkpoint_list[-1]
-            print(f"loading model {best_ckpt_path}")
-            checkpoint = torch.load(best_ckpt_path)
+        if self.checkpoint_files:
+            print(f"loading model {self.checkpoint_files[0]}")
+            checkpoint = torch.load(self.checkpoint_files[0])
             self.model.load_state_dict(checkpoint['model_state_dict'])
         else:
             raise FileNotFoundError(f"No checkpoint found for model_id={self.args.model_id}. Cannot summarize losses.")
 
+    
         self.model.eval()
         _, loader = self._get_data(flag=flag)
         feature_losses = [[] for _ in range(len(self.selected_columns))]
@@ -172,7 +152,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).to(self.device)
 
-                outputs, _ = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                outputs, _, _ = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
                 preds = outputs[:, -self.args.pred_len:, :].detach().cpu()
                 trues = batch_y[:, -self.args.pred_len:, :].detach().cpu()
@@ -213,7 +193,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         df = pd.DataFrame(rows)
 
-        data_name = f"{self.args.dataset}{self.suffix}"
+        # 저장 디렉토리 설정
+        suffix = ""
+        if self.args.reconstruction:
+            suffix = "_recon_ps" if self.args.use_ps_loss else "_recon"
+        else:
+            suffix = "_ps" if self.args.use_ps_loss else ""
+
+        data_name = f"{self.args.dataset}{suffix}"
         output_dir = os.path.join(
             "/data/pcw_workspace/Time-Series-Library/loss_results",
             self.args.model,
@@ -231,11 +218,20 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             df.to_csv(csv_path, index=False)
 
         print(f"Saved feature loss to: {csv_path}")
+    
+    def init_embedding(self):
+        return {key: [] for key in self.embedding_keys}
+
+    def store_embeddings(self, embeddings, embedding_dict):
+        for idx, embed in enumerate(embeddings):
+            if embed is not None:
+                embedding_dict[self.embedding_keys[idx]].append(embed.detach().cpu())
 
     def vali(self, vali_data, vali_loader, criterion, epoch, flag):
         total_loss = []
         feature_loss = [0.0] * len(self.selected_columns)
         reconstruction_loss = [0.0] * len(self.selected_columns)
+        embedding_dict = self.init_embedding()
 
         self.model.eval()
         with torch.no_grad():
@@ -263,10 +259,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
-                        outputs, _ = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                        outputs, _, embeddings = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                         # outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
-                    outputs, _ = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    outputs, _, embeddings = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
+                self.store_embeddings(embeddings, embedding_dict)
 
                 # valid에서는 예측값으로만 loss 계산 (reconstruction도 동일)
                 # (M은 모든 feature, MS&S는 하나의 feature)
@@ -320,6 +318,54 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                                         full_true[:, -self.args.pred_len:, idx])
                     feature_loss[idx] += ft_loss.item()
 
+        # epoch당 embedding 저장
+        if self.args.save_tsv:
+            for key in self.embedding_keys:
+                if not embedding_dict[key]:
+                    continue
+
+                # Batch 축으로 붙임
+                embed_tensor = torch.cat(embedding_dict[key], dim=0)  # [N_total, F, D]
+
+                if embed_tensor.dim() != 3:
+                    raise ValueError(f"Expected embedding tensor to have 3 dimensions [N, F, D], but got {embed_tensor.shape}")
+                
+                N, F, D = embed_tensor.shape
+            
+                labels = torch.linspace(0, F-1, F).to(torch.int).view(1, F).expand(N, F).cpu().flatten()
+
+                embed_tensor = embed_tensor.contiguous().view(-1, embed_tensor.size(-1))
+
+                embed_np = embed_tensor.cpu().numpy()  # [F, D]
+
+                save_embedding_tsv(
+                    vectors=embed_np,
+                    flag=flag,
+                    labels=labels,
+                    filename_prefix=key,
+                    epoch=epoch + 1,
+                    model=self.args.model,
+                    dataset=self.args.dataset,
+                    model_id=self.args.model_id
+                )
+            
+            # for name in ["position_embedding_em", "position_embedding_pr", "position_embedding_sh"]:
+            #     tensor = getattr(self.model, name, None)
+            #     if tensor is not None:
+            #         # F = feature+date 수
+            #         labels = torch.arange(tensor.shape[0])  # shape: [F]
+
+            #         save_embedding_tsv(
+            #             vectors=tensor.detach().cpu(),
+            #             flag=flag,
+            #             labels=labels,
+            #             filename_prefix=name,
+            #             epoch=epoch + 1,
+            #             model=self.args.model,
+            #             dataset=self.args.dataset,
+            #             model_id=self.args.model_id
+            #         )
+
         # epoch당 feature별 평균 loss
         for idx in range(len(feature_loss)):
             if self.args.features in ['S']:
@@ -366,18 +412,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         
         start_epoch = 0
         # 저장된 체크포인트가 있는지 확인
-
-        checkpoint_paths = glob.glob(os.path.join(self.checkpoint_dir, "checkpoint*.pth"))
-        checkpoint_list = list(sorted(checkpoint_paths, key=lambda x: int(x.split('_')[-2])))
-
-        if checkpoint_list:
-            best_ckpt_path = checkpoint_list[-1]
-            print(f"loading model {best_ckpt_path}")
-            checkpoint = torch.load(best_ckpt_path)
+        if self.checkpoint_files:
+            checkpoint = torch.load(self.checkpoint_files[0])
             self.model.load_state_dict(checkpoint['model_state_dict'])
             model_optim.load_state_dict(checkpoint['optimizer_state_dict'])
             start_epoch = checkpoint['epoch']
-            print(f"Checkpoint loaded {best_ckpt_path}. Resuming from epoch {start_epoch}")
+            print(f"Checkpoint loaded {self.checkpoint_files}. Resuming from epoch {start_epoch}")
 
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
@@ -434,9 +474,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
-                        outputs, _= self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                        outputs, _, _ = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
-                    outputs, _= self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    outputs, _, _ = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 # outputs은 recon일때는 seq+pred, 아닐때는 pred만큼만
                 # 모델 outputs 원래도 pred_len이였는데 밑에서 한번 더 해주는거임        
         
@@ -707,26 +747,37 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
+        # checkpoint 불러오기 (checkpoint_epoch_loss.pth 형식)
+        best_model_path = glob.glob(os.path.join(self.checkpoint_dir, "checkpoint*.pth"))
+
+        # load : 저장된 모델 로드
+        # load_state_dict : 현재 모델에 적용
+        if best_model_path:
+            print(f"loading checkpoint model {best_model_path[0]}")
+            checkpoint = torch.load(best_model_path[0])
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            # bento_model = bentoml.pytorch.save_model(f"{self.model}", self.model)
+            # print(f"Model saved to BentoML with name {self.model}.")
+
         return self.model
 
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
 
-        checkpoint_paths = glob.glob(os.path.join(self.checkpoint_dir, "checkpoint*.pth"))
-        checkpoint_list = list(sorted(checkpoint_paths, key=lambda x: int(x.split('_')[-2])))
-        best_ckpt_path = checkpoint_list[-1]
-        print(f"loading model {best_ckpt_path}")
-
-        checkpoint = torch.load(best_ckpt_path)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        if test and self.checkpoint_files:
+            print(f"loading model {self.checkpoint_files[0]}")
+            checkpoint = torch.load(self.checkpoint_files[0])
+            self.model.load_state_dict(checkpoint['model_state_dict'])
 
         input = []
         preds = []
         trues = []
         x_enc_shape, x_mark_enc_shape, x_dec_shape, x_mark_dec_shape = None, None, None, None
 
-        png_folder_path = f"./test_results/{self.args.model}/{self.args.dataset}{self.suffix}/{self.args.model_id}/"
+        png_folder_path = f"./test_results/{self.args.model}/{self.args.dataset}/{self.args.model_id}/"
         os.makedirs(png_folder_path, exist_ok=True)
+
+        embedding_dict = self.init_embedding()
 
         self.model.eval()
         mse_list = []
@@ -761,10 +812,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
-                        outputs, _ = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                        outputs, _, embeddings = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
-                    outputs, attns = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    outputs, attns, embeddings = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                     outputs_raw = outputs.detach().cpu().numpy()
+                
+                self.store_embeddings(embeddings, embedding_dict)
 
                 # len(attns)
                 # attns[0].shape torch.Size([1, 8, 10, 10])
@@ -838,21 +891,19 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             date_labels.append(date.strftime('%y-%m-%d'))
 
                     # Attention matrix 시각화
-                    if not self.args.dataset in ["traffic", "ECL"]:
-                        if self.args.model == 'iTransformer':
-                            visual_attention_matrix(
-                                attn_matrix = attn_matrix,
-                                save_root ='/data/pcw_workspace/Time-Series-Library/test_results_matrix',
-                                suffix = self.suffix,
-                                model = self.args.model,
-                                dataset_name = self.args.dataset,
-                                model_id = self.args.model_id,
-                                target_feature = self.args.target,
-                                feature_names = self.data_columns,
-                                freq = self.args.freq,
-                                features = self.args.features,
-                                sample_idx=i
-                            )
+                    if self.args.model == 'iTransformer':
+                        visual_attention_matrix(
+                            attn_matrix = attn_matrix,
+                            save_root ='/data/pcw_workspace/Time-Series-Library/test_results_matrix',
+                            model = self.args.model,
+                            dataset_name = self.args.dataset,
+                            model_id = self.args.model_id,
+                            target_feature = self.args.target,
+                            feature_names = self.data_columns,
+                            freq = self.args.freq,
+                            features = self.args.features,
+                            sample_idx=i
+                        )
 
                     input = batch_x.detach().cpu().numpy()
                     if test_data.scale and self.args.inverse:
@@ -896,18 +947,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     else:
                         stock_str = os.path.splitext(str(stock_name))[0]
 
-                    # traffic, ECL은 OT만 시각화
-                    if self.args.dataset in ["traffic", "ECL"]:
-                        # target feature 인덱스만 시각화
-                        if "OT" in self.selected_columns:
-                            f_idx_list = [self.selected_columns.index("OT")]
-                        else:
-                            print("Warning: OT not in selected_columns.")
-                            f_idx_list = []
-                    else:
-                        f_idx_list = list(range(num_features))
-
-                    for f_idx in f_idx_list:
+                    for f_idx in range(num_features):
                         if self.args.features != 'M':
                             feature_name = self.args.target
                         else:
@@ -931,6 +971,52 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         mse_list.append((feature_name, mse, os.path.join(feature_name, file_name)))
                     # MLflow에 artifact로 저장
                     #mlflow.log_artifact(os.path.join(folder_path, str(i) + '.png'))
+        
+        # embedding 저장
+        if self.args.save_tsv:
+            for key in self.embedding_keys:
+                if not embedding_dict[key]:
+                    continue
+
+                # Batch 축으로 붙임
+                embed_tensor = torch.cat(embedding_dict[key], dim=0)  # [N_total, F, D]
+
+                if embed_tensor.dim() != 3:
+                    raise ValueError(f"Expected embedding tensor to have 3 dimensions [N, F, D], but got {embed_tensor.shape}")
+                
+                N, F, D = embed_tensor.shape
+            
+                labels = torch.linspace(0, F-1, F).to(torch.int).view(1, F).expand(N, F).cpu().flatten()
+
+                embed_tensor = embed_tensor.contiguous().view(-1, embed_tensor.size(-1))
+
+                embed_np = embed_tensor.cpu().numpy()  # [F, D]
+
+                save_embedding_tsv(
+                    vectors=embed_np,
+                    flag='test',
+                    labels=labels,
+                    filename_prefix=key,
+                    model=self.args.model,
+                    dataset=self.args.dataset,
+                    model_id=self.args.model_id
+                )
+
+            for name in ["position_embedding_em", "position_embedding_pr", "position_embedding_sh"]:
+                tensor = getattr(self.model, name, None)
+                if tensor is not None:
+                    # F = feature+date 수
+                    labels = torch.arange(tensor.shape[0])  # shape: [F]
+
+                    save_embedding_tsv(
+                        vectors=tensor.detach().cpu(),
+                        flag='test',
+                        labels=labels,
+                        filename_prefix=name,
+                        model=self.args.model,
+                        dataset=self.args.dataset,
+                        model_id=self.args.model_id
+                    )
 
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
@@ -940,7 +1026,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        result_folder_path = (f"./results/{self.args.model}/{self.args.dataset}{self.suffix}/{self.args.model_id}/")
+        result_folder_path = (f"./results/{self.args.model}/{self.args.dataset}/{self.args.model_id}/")
         os.makedirs(result_folder_path, exist_ok=True)
 
         # dtw calculation
@@ -979,7 +1065,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         for feature_name, mse, file_path in mse_list:
             feature_mse_dict[feature_name].append((mse, file_path))
 
-        mse_folder_path = os.path.join("mse_results", self.args.model, f"{self.args.dataset}{self.suffix}", self.args.model_id)
+        mse_folder_path = os.path.join("mse_results", self.args.model, self.args.dataset, self.args.model_id)
         os.makedirs(mse_folder_path, exist_ok=True)
 
         # feature별로 저장
@@ -1006,198 +1092,30 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 for mse, file_path_str in entries:
                     f.write(f"file_name = {file_path_str}, MSE = {mse:.6f}\n")
 
+        #### ONNX 파일 추출
+        # dummy input 생성
+        # x_enc = torch.randn(*x_enc_shape)
+        # x_mark_enc = torch.randn(* x_mark_enc_shape)
+        # x_dec = torch.randn(* x_dec_shape)
+        # x_mark_dec = torch.randn(* x_mark_dec_shape)
+        # print("x_enc_shape:", x_enc_shape)
+        # print("x_mark_enc_shape:", x_mark_enc_shape)
+        # print("x_dec_shape:", x_dec_shape) 
+        # print("x_mark_dec_shape:", x_mark_dec_shape)
+        # torch.onnx.export(self.model, 
+        #                   (x_enc, x_mark_enc, x_dec, x_mark_dec), 
+        #                   os.path.join('./checkpoints/' + setting, 'checkpoint_onnx.onnx'), 
+        #                   input_names=['x_enc', 'x_mark_enc', 'x_dec', 'x_mark_dec'],
+        #                   output_names=['output'],
+        #                   opset_version=11,  # ONNX 버전
+        #                   export_params=True,        # 모델 파일 안에 학습된 모델 가중치를 저장할지의 여부
+        #                   do_constant_folding=True,  # 최적화시 상수폴딩을 사용할지의 여부
+        #                   dynamic_axes={
+        #                       'x_enc': {0: 'batch_size', 1: 'seq_len_enc'},
+        #                       'x_mark_enc': {0: 'batch_size', 1: 'seq_len_enc'},
+        #                       'x_dec': {0: 'batch_size', 1: 'seq_len_dec'},
+        #                       'x_mark_dec': {0: 'batch_size', 1: 'seq_len_dec'},
+        #                       'output': {0: 'batch_size', 1: 'seq_len_dec'}
+        #                   },
+        #                   verbose=True)
         return
-    
-    ############# tsne 관련 코드
-    def init_embedding(self):
-        return {key: [] for key in self.embedding_keys}
-    
-    def store_embeddings(self, embeddings, embedding_dict):
-        for idx, embed in enumerate(embeddings):
-            if embed is not None:
-                embedding_dict[self.embedding_keys[idx]].append(embed.detach().cpu())
-
-    def tsne_emb(self, setting):
-        checkpoint_paths = glob.glob(os.path.join(self.checkpoint_dir, "checkpoint*.pth"))
-        checkpoint_list = list(sorted(checkpoint_paths, key=lambda x: int(x.split('_')[-2])))
-
-        save_path = os.path.join(
-            "/data/pcw_workspace/Time-Series-Library/tsne_output",
-            self.args.model,
-            f"{self.args.dataset}{self.suffix}",
-            self.args.model_id
-        )
-        os.makedirs(save_path, exist_ok=True)
-        
-        ## val은 해당되는 에폭 모두, test는 마지막 에폭만
-        for flag in ["val", "test"]:
-            print(f"[{flag}] save tsne.png is True: {self.args.model_id}...")
-
-            _, loader = self._get_data(flag=flag)
-
-            # val은 전체, test는 마지막 하나만
-            loop_ckpts = checkpoint_list if flag == "val" else [checkpoint_list[-1]]
-
-            for ckpt_path in loop_ckpts:
-                current_epoch = ckpt_path.split('_')[-2]
-                print(f"Loading model from epoch {current_epoch} → {ckpt_path}")
-
-                checkpoint = torch.load(ckpt_path)
-                self.model.load_state_dict(checkpoint['model_state_dict'])
-
-                embedding_dict = self.init_embedding()
-                self.model.eval()
-                with torch.no_grad():
-                    for i, batch in enumerate(tqdm(loader, desc=f"Inference ({flag}, epoch {current_epoch})")):
-                        batch_x, batch_y, batch_x_mark, batch_y_mark = batch[:4]
-
-                        batch_x = batch_x.float().to(self.device)
-                        batch_y = batch_y.float().to(self.device)
-
-                        batch_x_mark = batch_x_mark.float().to(self.device)
-                        batch_y_mark = batch_y_mark.float().to(self.device)
-
-                        dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                        dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).to(self.device)
-
-                        # 모델 추론
-                        embeddings = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                        self.store_embeddings(embeddings, embedding_dict)
-
-                # positional embedding 전후 비교 값
-                for key in tqdm(self.embedding_keys, desc=f"Embedding Visualization"):
-                    if not embedding_dict[key]:
-                        continue
-
-                    # Batch 축으로 붙임
-                    embed_tensor = torch.cat(embedding_dict[key], dim=0)  # [N_total, F, D]
-
-                    if embed_tensor.dim() != 3:
-                        raise ValueError(f"Expected embedding tensor to have 3 dimensions [N, F, D], but got {embed_tensor.shape}")
-                    
-                    N, F, D = embed_tensor.shape
-                
-                    labels = torch.linspace(0, F-1, F).to(torch.int).view(1, F).expand(N, F).cpu().flatten()
-
-                    embed_tensor = embed_tensor.contiguous().view(-1, embed_tensor.size(-1))
-
-                    embed_np = embed_tensor.cpu().numpy()  # [F, D]
-                    
-                    # embedding 값 시각화
-                    visual_tsne(
-                        vectors=embed_np,
-                        flag=flag,
-                        save_path=save_path,
-                        filename_prefix=key,
-                        labels = labels,
-                        epoch=current_epoch,
-                        model=self.args.model,
-                        dataset=self.args.dataset,
-                        model_id=self.args.model_id
-                    )
-
-                # positional embedding vector 값
-                if not (self.args.position_encoding_emb or self.args.position_encoding_proj):
-                    for name in tqdm(["position_embedding_em", "position_embedding_pr", "position_embedding_sh"], desc=f"Vector Visualization"):
-                        tensor = getattr(self.model, name, None)
-                        if tensor is not None:
-                            # F = feature+date 수
-                            labels = torch.arange(tensor.shape[0])  # shape: [F]
-
-                            visual_tsne(
-                                vectors=tensor.detach().cpu(),
-                                flag=flag,
-                                save_path=save_path,
-                                filename_prefix=name,
-                                labels = labels,
-                                epoch=current_epoch,
-                                model=self.args.model,
-                                dataset=self.args.dataset,
-                                model_id=self.args.model_id
-                            )
-
-                # L1 통계 저장
-                self.save_embedding_to_csv(
-                    embedding_dict=embedding_dict,
-                    epoch=current_epoch,
-                    flag=flag
-                )
-
-    def save_embedding_to_csv(self, embedding_dict, epoch, flag):
-        output_dir = os.path.join(
-            "/data/pcw_workspace/Time-Series-Library/embedding_vector",
-            self.args.model,
-            f"{self.args.dataset}{self.suffix}"
-        )
-        os.makedirs(output_dir, exist_ok=True)
-
-        save_items = []  # [(rows, filename)]
-
-        model_rows = []
-        pos_rows = []
-
-        # ----- self.embedding_keys: L1 통계 -----
-        for key in tqdm(self.embedding_keys, desc="Embedding Vector L1 Stats"):
-            if not embedding_dict.get(key):
-                continue
-
-            embed_tensor = torch.cat(embedding_dict[key], dim=0)  # [N, F, D]
-
-            l1_values = embed_tensor.abs().sum(dim=2)  # [N, F] ← 각 feature별 L1 norm
-            l1_mean = l1_values.mean(dim=0) # [F] ← feature별 평균 L1 norm
-            l1_std  = l1_values.std(dim=0)
-            l1_max  = l1_values.max(dim=0).values
-            l1_min  = l1_values.min(dim=0).values
-
-            for i in range(l1_mean.shape[0]):
-                model_rows.append({
-                    'model_id' : self.args.model_id,
-                    'type': 'model embedding',
-                    'name': key,
-                    'feature_index': i,
-                    'epoch': epoch,
-                    'l1_mean': l1_mean[i].item(),
-                    'l1_std': l1_std[i].item(),
-                    'l1_max': l1_max[i].item(),
-                    'l1_min': l1_min[i].item(),
-                    'flag': flag,
-                    'model' : self.args.model
-                })
-
-        save_items.append((model_rows, f"{flag}_model_embedding.csv"))
-
-        # ----- position_embedding_*: 평균, 분산, L1 norm -----
-        if not (self.args.position_encoding_emb or self.args.position_encoding_proj):
-            for name in ["position_embedding_em", "position_embedding_pr", "position_embedding_sh"]:
-                pe_tensor = getattr(self.model, name, None)
-                if pe_tensor is not None:
-                    pe_tensor = pe_tensor.detach().cpu()  # [F, D]
-                    l1_sum = pe_tensor.abs().sum(dim=1)   # [F]
-
-                    for i, l1 in enumerate(l1_sum):
-                        pos_rows.append({
-                            'model_id' : self.args.model_id,
-                            'type': 'position embedding',
-                            'name': name,
-                            'feature_index': i,
-                            'epoch': epoch,
-                            'l1_sum': l1.item(),
-                            'flag': flag,
-                            'model' : self.args.model
-                        })
-
-        save_items.append((pos_rows, f"{flag}_position_embedding.csv"))
-        
-        for rows, filename in save_items:
-            if not rows:
-                continue
-
-            df = pd.DataFrame(rows)
-            csv_path = os.path.join(output_dir, filename)
-
-            if os.path.exists(csv_path):
-                df.to_csv(csv_path, mode='a', index=False, header=False)
-            else:
-                df.to_csv(csv_path, index=False)
-
-            print(f"[{flag}-Epoch{epoch}] Saved to: {csv_path}")

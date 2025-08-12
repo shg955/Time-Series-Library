@@ -1,0 +1,67 @@
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model iTransformer \
+  --dataset weather \
+  --name iTransformer_base_ps_weather \
+  > /data/pcw_workspace/Time-Series-Library/log/iTransformer/weather/log.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model iTransformer \
+  --dataset exchange_rate \
+  --name iTransformer_base_ps_exchange_rate \
+  > /data/pcw_workspace/Time-Series-Library/log/iTransformer/exchange_rate/log.txt &
+
+ ---
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model iTransformer \
+  --dataset ETTh1 \
+  --name iTransformer_base_ps_ETTh1 \
+  > /data/pcw_workspace/Time-Series-Library/log/iTransformer/ETTh1/log.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model iTransformer \
+  --dataset ETTh2 \
+  --name iTransformer_base_ps_ETTh2 \
+  > /data/pcw_workspace/Time-Series-Library/log/iTransformer/ETTh2/log.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model iTransformer \
+  --dataset ETTm1 \
+  --name iTransformer_base_ps_ETTm1 \
+  > /data/pcw_workspace/Time-Series-Library/log/iTransformer/ETTm1/log.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model iTransformer \
+  --dataset ETTm2 \
+  --name iTransformer_base_ps_ETTm2 \
+  > /data/pcw_workspace/Time-Series-Library/log/iTransformer/ETTm2/log.txt &
+
+
+--
+
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model iTransformer \
+  --dataset traffic \
+  > /data/pcw_workspace/Time-Series-Library/log/iTransformer/traffic/log.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model iTransformer \
+  --dataset ECL \
+  > /data/pcw_workspace/Time-Series-Library/log/iTransformer/ECL/log.txt &
+
+
+CUDA_VISIBLE_DEVICES=1 python -u run.py \
+  --is_training 1 \
+  --model iTransformer \
+  --dataset ETTh1 \
+  --name iTransformer_ETTh1
+

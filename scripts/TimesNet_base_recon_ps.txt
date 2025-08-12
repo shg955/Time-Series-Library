@@ -1,0 +1,59 @@
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimesNet \
+  --dataset weather \
+  --name TimesNet_base_recon_ps_weather \
+  > /data/pcw_workspace/Time-Series-Library/log/TimesNet/weather/log2.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimesNet \
+  --dataset exchange_rate \
+  --name TimesNet_base_ps_exchange_rate \
+  > /data/pcw_workspace/Time-Series-Library/log/TimesNet/exchange_rate/log.txt &
+
+ ---
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimesNet \
+  --dataset ETTh1 \
+  --name TimesNet_base_ps_ETTh1 \
+  > /data/pcw_workspace/Time-Series-Library/log/TimesNet/ETTh1/log.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimesNet \
+  --dataset ETTh2 \
+  --name TimesNet_base_ps_ETTh2 \
+  > /data/pcw_workspace/Time-Series-Library/log/TimesNet/ETTh2/log.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimesNet \
+  --dataset ETTm1 \
+  --name TimesNet_base_recon_ps_ETTm1 \
+  > /data/pcw_workspace/Time-Series-Library/log/TimesNet/ETTm1/log2.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimesNet \
+  --dataset ETTm2 \
+  --name TimesNet_base_recon_ps_ETTm2 \
+  > /data/pcw_workspace/Time-Series-Library/log/TimesNet/ETTm2/log2.txt &
+
+
+--
+
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimesNet \
+  --dataset traffic \
+  > /data/pcw_workspace/Time-Series-Library/log/TimesNet/traffic/log.txt &
+
+CUDA_VISIBLE_DEVICES=1 nohup python -u run.py \
+  --is_training 1 \
+  --model TimesNet \
+  --dataset ECL \
+  > /data/pcw_workspace/Time-Series-Library/log/TimesNet/ECL/log.txt &
