@@ -39,10 +39,20 @@ class Model(nn.Module):
         stride: int, stride for patch_embedding
         """
         super().__init__()
+        self.configs = configs
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
         padding = stride
+
+        if hasattr(self.configs, 'pe_weight_activation'):
+            self.pe_activation = configs.pe_weight_activation
+        
+        if hasattr(self.configs, 'position_embedding_emb') and self.configs.position_embedding_emb:
+            self.position_embedding_em = nn.Parameter(torch.randn(configs.enc_in, configs.d_model))
+        
+        if hasattr(self.configs, 'position_embedding_weight') and self.configs.position_embedding_weight:
+            self.pe_em_weight = nn.Parameter(torch.full((configs.enc_in, 1), configs.pe_weight))
 
         # patching and embedding
         self.patch_embedding = PatchEmbedding(
@@ -92,6 +102,16 @@ class Model(nn.Module):
         # u: [bs * nvars x patch_num x d_model]
         enc_out, n_vars = self.patch_embedding(x_enc)
 
+        if hasattr(self.configs, 'position_embedding_emb') and self.configs.position_embedding_emb:
+            B = x_enc.shape[0]
+            var_ids = torch.arange(n_vars, device=enc_out.device).unsqueeze(0).repeat(B, 1).reshape(-1)
+            pe = self.position_embedding_em[var_ids]
+            if hasattr(self.configs, 'position_embedding_weight') and self.configs.position_embedding_weight:
+                weights = self.pe_activation(self.pe_em_weight.squeeze(-1))
+                weights = weights[var_ids].unsqueeze(-1)
+                pe = weights * pe
+            enc_out = enc_out + pe.unsqueeze(1)
+
         # Encoder
         # z: [bs * nvars x patch_num x d_model]
         enc_out, attns = self.encoder(enc_out)
@@ -128,6 +148,16 @@ class Model(nn.Module):
         # u: [bs * nvars x patch_num x d_model]
         enc_out, n_vars = self.patch_embedding(x_enc)
 
+        if hasattr(self.configs, 'position_embedding_emb') and self.configs.position_embedding_emb:
+            B = x_enc.shape[0]
+            var_ids = torch.arange(n_vars, device=enc_out.device).unsqueeze(0).repeat(B, 1).reshape(-1)
+            pe = self.position_embedding_em[var_ids]
+            if hasattr(self.configs, 'position_embedding_weight') and self.configs.position_embedding_weight:
+                weights = self.pe_activation(self.pe_em_weight.squeeze(-1))
+                weights = weights[var_ids].unsqueeze(-1)
+                pe = weights * pe
+            enc_out = enc_out + pe.unsqueeze(1)
+
         # Encoder
         # z: [bs * nvars x patch_num x d_model]
         enc_out, attns = self.encoder(enc_out)
@@ -160,6 +190,16 @@ class Model(nn.Module):
         x_enc = x_enc.permute(0, 2, 1)
         # u: [bs * nvars x patch_num x d_model]
         enc_out, n_vars = self.patch_embedding(x_enc)
+
+        if hasattr(self.configs, 'position_embedding_emb') and self.configs.position_embedding_emb:
+            B = x_enc.shape[0]
+            var_ids = torch.arange(n_vars, device=enc_out.device).unsqueeze(0).repeat(B, 1).reshape(-1)
+            pe = self.position_embedding_em[var_ids]
+            if hasattr(self.configs, 'position_embedding_weight') and self.configs.position_embedding_weight:
+                weights = self.pe_activation(self.pe_em_weight.squeeze(-1))
+                weights = weights[var_ids].unsqueeze(-1)
+                pe = weights * pe
+            enc_out = enc_out + pe.unsqueeze(1)
 
         # Encoder
         # z: [bs * nvars x patch_num x d_model]
@@ -194,6 +234,16 @@ class Model(nn.Module):
         # u: [bs * nvars x patch_num x d_model]
         enc_out, n_vars = self.patch_embedding(x_enc)
 
+        if hasattr(self.configs, 'position_embedding_emb') and self.configs.position_embedding_emb:
+            B = x_enc.shape[0]
+            var_ids = torch.arange(n_vars, device=enc_out.device).unsqueeze(0).repeat(B, 1).reshape(-1)
+            pe = self.position_embedding_em[var_ids]
+            if hasattr(self.configs, 'position_embedding_weight') and self.configs.position_embedding_weight:
+                weights = self.pe_activation(self.pe_em_weight.squeeze(-1))
+                weights = weights[var_ids].unsqueeze(-1)
+                pe = weights * pe
+            enc_out = enc_out + pe.unsqueeze(1)
+
         # Encoder
         # z: [bs * nvars x patch_num x d_model]
         enc_out, attns = self.encoder(enc_out)
@@ -213,7 +263,7 @@ class Model(nn.Module):
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast' or self.task_name == 'paper':
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
-            return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+            return dec_out[:, -self.pred_len:, :] , None  # [B, L, D]
         if self.task_name == 'imputation':
             dec_out = self.imputation(
                 x_enc, x_mark_enc, x_dec, x_mark_dec, mask)
