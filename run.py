@@ -424,10 +424,10 @@ if __name__ == '__main__':
                 # prediction length, d_model도 달라지게 d_ff
                 for pred_len in [96, 192, 336, 720]:
                     args.pred_len = pred_len
-                    args.d_ff = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff'][pred_len]
-                    args.d_model = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model'][pred_len]
-                    args.e_layers = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers'][pred_len]
-                    args.batch_size = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size'][pred_len]
+                    args.d_ff = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff'],dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff']
+                    args.d_model = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model'], dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model']
+                    args.e_layers = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers'], dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers']
+                    args.batch_size = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size'], dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size']
 
                     args.model_id = f'{args.model}_{args.dataset}_{args.seq_len}_{args.pred_len}_{args.features}'
                     args.model_id = args.model_id + f'_{args.target}' if args.features != 'M' else args.model_id
