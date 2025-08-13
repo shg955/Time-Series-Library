@@ -5,6 +5,26 @@ DEFAULT_DATASET_SETTINGS = {
         'freq': 'h',
         'mark_in' : ['HourOfDay', 'DayOfWeek', 'DayOfMonth', 'DayOfYear'],
         'targets': ['HUFL', 'HULL', 'MUFL', 'MULL', 'LUFL', 'LULL', 'OT'],
+        'PatchTST': {
+            'e_layers': 1,
+            'd_layers': 1,
+            'factor': 3,
+            'label_len': 0,
+            'batch_size' : 32,
+            'learning_rate' : 0.0001,
+            'd_ff': {
+                96: 128,
+                192: 128,
+                336: 512,
+                720: 512
+            },
+            'd_model': {
+                96: 128,
+                192: 128,
+                336: 512,
+                720: 512
+            }
+        },
         'iTransformer': {
             'e_layers': 2,
             'd_layers': 1,
@@ -82,6 +102,26 @@ DEFAULT_DATASET_SETTINGS = {
         'freq': 'h',
         'mark_in' : ['HourOfDay', 'DayOfWeek', 'DayOfMonth', 'DayOfYear'],
         'targets': ['HUFL', 'HULL', 'MUFL', 'MULL', 'LUFL', 'LULL', 'OT'],
+        'PatchTST': {
+            'e_layers': 1,
+            'd_layers': 1,
+            'factor': 3,
+            'label_len': 0,
+            'batch_size' : 32,
+            'learning_rate' : 0.0001,
+            'd_ff': {
+                96: 128,
+                192: 128,
+                336: 512,
+                720: 512
+            },
+            'd_model': {
+                96: 128,
+                192: 128,
+                336: 512,
+                720: 512
+            }
+        },
         'iTransformer': {
             'e_layers': 2,
             'd_layers': 1,
@@ -159,6 +199,26 @@ DEFAULT_DATASET_SETTINGS = {
         'freq': 't',
         'mark_in' : ['MinuteOfHour', 'HourOfDay', 'DayOfWeek', 'DayOfMonth', 'DayOfYear'],
         'targets': ['HUFL', 'HULL', 'MUFL', 'MULL', 'LUFL', 'LULL', 'OT'],
+        'PatchTST': {
+            'e_layers': 1,
+            'd_layers': 1,
+            'factor': 3,
+            'label_len': 0,
+            'batch_size' : 32,
+            'learning_rate' : 0.0001,
+            'd_ff': {
+                96: 128,
+                192: 128,
+                336: 512,
+                720: 512
+            },
+            'd_model': {
+                96: 128,
+                192: 128,
+                336: 512,
+                720: 512
+            }
+        },
         'iTransformer': {
             'e_layers': 2,
             'd_layers': 1,
