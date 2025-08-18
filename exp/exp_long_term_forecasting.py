@@ -20,6 +20,8 @@ from datetime import datetime
 from collections import defaultdict
 from utils.metrics import MSE, MAE
 from utils.PSLoss import PSLoss
+from torch.optim import lr_scheduler 
+
 
 warnings.filterwarnings('ignore')
 
@@ -381,6 +383,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
+        
+        scheduler = lr_scheduler.OneCycleLR(optimizer = model_optim,
+                                            steps_per_epoch = train_steps,
+                                            pct_start = self.args.pct_start,
+                                            epochs = self.args.train_epochs,
+                                            max_lr = self.args.learning_rate)
 
         # 체크포인트가 있으면 start부터, 없다면 0부터 학습 시작함
         for epoch in range(start_epoch, self.args.train_epochs):
@@ -501,6 +509,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     total_loss.backward()
                     model_optim.step()
+
+                if self.args.lradj == 'TST':
+                    adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args, printout=False)
+                    scheduler.step()
 
                 # feature별 기록용 loss (예측값)
                 # recon일때는 loss 3개 기록 (입력값+예측값 / 예측값 / 입력값)
@@ -705,7 +717,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 print("Early stopping")
                 break
 
-            adjust_learning_rate(model_optim, epoch + 1, self.args)
+            if self.args.lradj != 'TST':
+                adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args)
+            else:
+                print('Updating learning rate to {}'.format(scheduler.get_last_lr()[0]))
 
         return self.model
 

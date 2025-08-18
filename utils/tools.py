@@ -14,7 +14,7 @@ import glob
 plt.switch_backend('agg')
 
 
-def adjust_learning_rate(optimizer, epoch, args):
+def adjust_learning_rate(optimizer, scheduler, epoch, args, printout=True):
     # lr = args.learning_rate * (0.2 ** (epoch // 2))
     if args.lradj == 'type1':
         lr_adjust = {epoch: args.learning_rate * (0.5 ** ((epoch - 1) // 1))}
@@ -29,11 +29,14 @@ def adjust_learning_rate(optimizer, epoch, args):
         lr_adjust = {epoch: args.learning_rate /2 * (1 + math.cos(epoch / args.train_epochs * math.pi))}
     elif args.lradj == "None":
         lr_adjust = {}
+    elif args.lradj == 'TST':
+        lr_adjust = {epoch: scheduler.get_last_lr()[0]}
+        
     if epoch in lr_adjust.keys():
         lr = lr_adjust[epoch]
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
-        print('Updating learning rate to {}'.format(lr))
+        if printout: print('Updating learning rate to {}'.format(lr))
 
 
 class EarlyStopping:
