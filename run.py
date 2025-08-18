@@ -195,11 +195,6 @@ if __name__ == '__main__':
     mlflow.set_tracking_uri("http://ubinetlab.iptime.org:15000")
     tracking_uri = mlflow.get_tracking_uri()
     print(f"Current tracking uri: {tracking_uri}")
-    fix_seed = 2021
-    # iTransformer 2023 TimesNet 2021 TimeXer 2021
-    random.seed(fix_seed)
-    torch.manual_seed(fix_seed)
-    np.random.seed(fix_seed)
 
     parser = argparse.ArgumentParser(description='TimesNet')
 
@@ -283,6 +278,7 @@ if __name__ == '__main__':
     parser.add_argument('--loss', type=str, default='MSE', help='loss function')
     parser.add_argument('--lradj', type=str, default='type1', help='adjust learning rate')
     parser.add_argument('--use_amp', action='store_true', help='use automatic mixed precision training', default=False)
+    parser.add_argument('--pct_start', type=float, default=0.3, help='pct_start')
 
     # GPU
     parser.add_argument('--use_gpu', type=str2bool, nargs='?', default=True, help='use gpu')
@@ -365,109 +361,138 @@ if __name__ == '__main__':
     # store_true : 해당 인자가 존재하면 T/ 아니면 F
 
     args = parser.parse_args()
-
+    
     args.data = args.dataset if args.dataset in ['ETTh1', 'ETTh2', 'ETTm1', 'ETTm2'] else 'custom'
     args.freq = DEFAULT_DATASET_SETTINGS[args.dataset]['freq']
     args.mark_in = DEFAULT_DATASET_SETTINGS[args.dataset]['mark_in']
     args.root_path = DEFAULT_DATASET_SETTINGS[args.dataset]['root_path']
     args.data_path = DEFAULT_DATASET_SETTINGS[args.dataset]['data_path']
 
-    # args.batch_size = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size']
-    # args.e_layers = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers']
-    args.d_layers = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_layers']
-    args.factor = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['factor']
-    args.label_len = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['label_len']
-    args.learning_rate = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['learning_rate']
+    # config 파일에 있으면 해당 값 사용, 없으면 선언시 default 사용
+    args.d_layers = DEFAULT_DATASET_SETTINGS[args.dataset][args.model].get('d_layers', args.d_layers)
+    args.factor = DEFAULT_DATASET_SETTINGS[args.dataset][args.model].get('factor', args.factor)
+    args.label_len = DEFAULT_DATASET_SETTINGS[args.dataset][args.model].get('label_len', args.label_len)
+    args.seq_len = DEFAULT_DATASET_SETTINGS[args.dataset][args.model].get('seq_len', args.seq_len)
+    args.n_heads = DEFAULT_DATASET_SETTINGS[args.dataset][args.model].get('n_heads', args.n_heads)
+    args.dropout = DEFAULT_DATASET_SETTINGS[args.dataset][args.model].get('dropout', args.dropout)
+    args.lradj = DEFAULT_DATASET_SETTINGS[args.dataset][args.model].get('lradj', args.lradj)
+    args.learning_rate = DEFAULT_DATASET_SETTINGS[args.dataset][args.model].get('learning_rate', args.learning_rate)
     
     # paper, recon, psloss
     # for experiment_type in [(False, False),(True, False),(True, True)]:
-    # for experiment_type in [(False, False)]:
     experiment_type = (False, False)
-    args.is_tsne_emb = False
-    # args.position_embedding_weight = True
-    # args.each_weight = True
-
-    activation_map = {
-    'identity': nn.Identity(),
-    'sigmoid': nn.Sigmoid(),
-    'relu': nn.ReLU(),
-    'tanh' : nn.Tanh()
-    }
+    # args.is_tsne_emb = True
     
-    # channelwise Projection, embedding, projection+embedding
+    # channelwise / position encoding / variate embeeding -> embedding? projection? embedding+projection?
     # for position_setting in [(True, False), (False, True), (True, True)]:
     # for position_setting in [(False, False, True), (True, False, True), (False, True, True), (True, True, True), (True, True, False)]:
-    for position_setting in [(False, False, True), (True, False, True)]:
+    for position_setting in [(False, False, True, False), (True, False, True, False), (True, False, True, True)]:
+        # base, embedding, embedding(scaling factor)
+
+        # random seed
+        fix_seed = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['random_seed']
+        random.seed(fix_seed)
+        torch.manual_seed(fix_seed)
+        np.random.seed(fix_seed)
+
+        # recon, psloss
         args.reconstruction, args.use_ps_loss = experiment_type
+
+        # position encoding
         # args.position_encoding_emb, args.position_encoding_proj = position_setting
-        args.position_embedding_emb, args.position_embedding_proj, args.use_separate = position_setting
+
+        # variate embedding
+        args.position_embedding_emb, args.position_embedding_proj, args.use_separate, args.position_embedding_weight = position_setting
 
         # positional embedding weight 적용 (True, False, True)
-        # for position_weights in [round(x * 0.1, 1) for x in range(1, 10)]:
-        # for position_weights in [0.1]:
-        #     args.pe_weight = position_weights
+        if args.position_embedding_weight:
+            # 각 feature별 weight 설정
+            args.each_weight = True
+            weights = [0.1] # [round(x * 0.1, 1) for x in range(1, 10)]
+            activations = ['identity']  # ['identity', 'sigmoid', 'relu']
+            weight_grid = [(True, w, f) for w in weights for f in activations]
+        else:
+            weight_grid = [(False, None, 'identity')]
+
+        for use_weight, weight, func_name in weight_grid:
+            args.position_embedding_weight = use_weight # T/F
+            # scaling factor function
+            activation_map = {
+            'identity': nn.Identity(),
+            'sigmoid': nn.Sigmoid(),
+            'relu': nn.ReLU(),
+            'tanh' : nn.Tanh()
+            }
+
+            if use_weight:
+                args.pe_weight = weight
+                args.pe_weight_activation = activation_map[func_name]
+            else:
+                args.pe_weight = None
+                args.pe_weight_activation = activation_map['identity']
             
-        #     for func in ['identity']:
-        #         args.pe_weight_activation = activation_map[func]
       
-        # M MS S
-        # for feature_mode in ['M', 'MS', 'S']:
-        for feature_mode in ['M']:
-            args.features = feature_mode
-            args.enc_in = len(DEFAULT_DATASET_SETTINGS[args.dataset]['targets']) if feature_mode != 'S' else 1
-            args.dec_in = len(DEFAULT_DATASET_SETTINGS[args.dataset]['targets']) if feature_mode != 'S' else 1
-            args.c_out = len(DEFAULT_DATASET_SETTINGS[args.dataset]['targets']) if feature_mode != 'S' else 1
+            # ['M', 'MS', 'S']
+            for feature_mode in ['M']:
+                args.features = feature_mode
+                args.enc_in = len(DEFAULT_DATASET_SETTINGS[args.dataset]['targets']) if feature_mode != 'S' else 1
+                args.dec_in = len(DEFAULT_DATASET_SETTINGS[args.dataset]['targets']) if feature_mode != 'S' else 1
+                args.c_out = len(DEFAULT_DATASET_SETTINGS[args.dataset]['targets']) if feature_mode != 'S' else 1
 
-            # target (MS, S일때만)
-            for target in DEFAULT_DATASET_SETTINGS[args.dataset]['targets']:
-                args.target = target
-                # prediction length, d_model도 달라지게 d_ff
-                for pred_len in [96, 192, 336, 720]:
-                    args.pred_len = pred_len
-                    args.d_ff = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff'],dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff']
-                    args.d_model = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model'], dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model']
-                    args.e_layers = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers'], dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers']
-                    args.batch_size = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size'], dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size']
+                # target (MS, S일때만)
+                for target in DEFAULT_DATASET_SETTINGS[args.dataset]['targets']:
+                    args.target = target
+                    for pred_len in [96, 192, 336, 720]:
+                        args.pred_len = pred_len
+                        args.d_ff = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff'],dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_ff']
+                        args.d_model = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model'], dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['d_model']
+                        args.e_layers = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers'], dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['e_layers']
+                        args.batch_size = DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size'][pred_len] if isinstance(DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size'], dict) else DEFAULT_DATASET_SETTINGS[args.dataset][args.model]['batch_size']
 
-                    args.model_id = f'{args.model}_{args.dataset}_{args.seq_len}_{args.pred_len}_{args.features}'
-                    args.model_id = args.model_id + f'_{args.target}' if args.features != 'M' else args.model_id
-                    args.model_id = args.model_id + '_recon' if args.reconstruction else args.model_id
-                    args.model_id = args.model_id + '_ps' if args.use_ps_loss else args.model_id
-                    args.model_id = args.model_id + '_posiemb_emb' if args.position_embedding_emb else args.model_id
-                    args.model_id = args.model_id + '_posiemb_proj' if args.position_embedding_proj else args.model_id
-                    args.model_id = args.model_id + '_share' if not args.use_separate else args.model_id
-                    args.model_id = args.model_id + '_posienc_emb' if args.position_encoding_emb else args.model_id
-                    args.model_id = args.model_id + '_posienc_proj' if args.position_encoding_proj else args.model_id
-                    # args.model_id = args.model_id + f'_weight_{args.pe_weight}' if args.position_embedding_weight else args.model_id
-                    # args.model_id = args.model_id + '_all' if not args.each_weight else args.model_id
-                    # args.model_id = args.model_id + f'_{func}' if func != 'identity' else args.model_id
+                        # model id settting
+                        args.model_id = f'{args.model}_{args.dataset}_{args.seq_len}_{args.pred_len}_{args.features}'
+                        args.model_id = args.model_id + f'_{args.target}' if args.features != 'M' else args.model_id
+                        args.model_id = args.model_id + '_recon' if args.reconstruction else args.model_id
+                        args.model_id = args.model_id + '_ps' if args.use_ps_loss else args.model_id
+                        if args.position_encoding_emb or args.position_encoding_proj:
+                            args.model_id = args.model_id + '_posienc_emb' if args.position_encoding_emb else args.model_id
+                            args.model_id = args.model_id + '_posienc_proj' if args.position_encoding_proj else args.model_id
+                        if args.position_embedding_emb or args.position_embedding_proj:
+                            args.model_id = args.model_id + '_posiemb_emb' if args.position_embedding_emb else args.model_id
+                            args.model_id = args.model_id + '_posiemb_proj' if args.position_embedding_proj else args.model_id
+                            args.model_id = args.model_id + '_share' if not args.use_separate else args.model_id
+                            if args.position_embedding_weight:
+                                args.model_id = args.model_id + f'_weight_{args.pe_weight}'
+                                args.model_id = args.model_id + f'_{func_name}' if func_name != 'identity' else args.model_id
+                                args.model_id = args.model_id + '_all' if not args.each_weight else args.model_id
+                            
+                        # checkpoint file folder setting
+                        suffix = ""
+                        if args.reconstruction:
+                            suffix = "_recon_ps" if args.use_ps_loss else "_recon"
+                        elif args.use_ps_loss:
+                            suffix = "_ps" if args.use_ps_loss else ""
+                        elif args.position_embedding_emb or args.position_embedding_proj:
+                            suffix = "_posiemb"
+                            if args.position_embedding_weight:
+                                suffix += "_weight"
+                        elif args.position_encoding_emb or args.position_encoding_proj:
+                            suffix = "_posienc"
+                        elif args.channelwise_embedding or args.channelwise_projection:
+                            suffix = "_channelwise"
+                        
+                        current_path = f'/data/pcw_workspace/Time-Series-Library/checkpoints/{args.model}/{args.dataset}{suffix}/{args.model_id}'
+                        
+                        if args.is_tsne_emb:
+                            if not os.path.exists(current_path):
+                                print(f'{args.model_id} not found. Skip TSNE.')
+                                continue
+                        elif args.is_training == 1:
+                            if os.path.exists(current_path):
+                                print(f'{args.model_id} experiments already run!')
+                                continue
 
-                    suffix = ""
-                    if args.reconstruction:
-                        suffix = "_recon_ps" if args.use_ps_loss else "_recon"
-                    elif args.use_ps_loss:
-                        suffix = "_ps" if args.use_ps_loss else ""
-                    elif args.position_embedding_emb or args.position_embedding_proj:
-                        suffix = "_posiemb"
-                        if args.position_embedding_weight:
-                            suffix += "_weight"
-                    elif args.position_encoding_emb or args.position_encoding_proj:
-                        suffix = "_posienc"
-                    elif args.channelwise_embedding or args.channelwise_projection:
-                        suffix = "_channelwise"
+                        main(args)
                     
-                    current_path = f'/data/pcw_workspace/Time-Series-Library/checkpoints/{args.model}/{args.dataset}{suffix}/{args.model_id}'
-                    
-                    if args.is_tsne_emb:
-                        if not os.path.exists(current_path):
-                            print(f'{args.model_id} not found. Skip TSNE.')
-                            continue
-                    elif args.is_training == 1:
-                        if os.path.exists(current_path):
-                            print(f'{args.model_id} experiments already run!')
-                            continue
-
-                    main(args)
-                
-                if feature_mode == 'M':
-                    break
+                    if feature_mode == 'M':
+                        break
