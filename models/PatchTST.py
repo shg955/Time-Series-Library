@@ -79,7 +79,8 @@ class Model(nn.Module):
                        int((configs.seq_len - patch_len) / stride + 2)
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast' or self.task_name == 'paper':
             self.head = FlattenHead(configs.enc_in, self.head_nf, configs.pred_len,
-                                    head_dropout=configs.dropout)
+                                    head_dropout=0)
+            # offical code 확인해보니 head_dropout 모두 0으로 되어있었음
         elif self.task_name == 'imputation' or self.task_name == 'anomaly_detection':
             self.head = FlattenHead(configs.enc_in, self.head_nf, configs.seq_len,
                                     head_dropout=configs.dropout)
