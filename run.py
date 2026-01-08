@@ -7,10 +7,16 @@ from exp.exp_imputation import Exp_Imputation
 from exp.exp_short_term_forecasting import Exp_Short_Term_Forecast
 from exp.exp_anomaly_detection import Exp_Anomaly_Detection
 from exp.exp_classification import Exp_Classification
+from exp.exp_delta_loss import Exp_Delta_Loss
+from exp.exp_delta_loss_PACF import Exp_Delta_Loss_PACF
+from exp.exp_DBLoss import Exp_DBLoss
 from utils.print_args import print_args
 import random
 import numpy as np
 import mlflow
+
+from mlflow.tracking import MlflowClient
+
 def str2bool(v):
     if isinstance(v, bool):
         return v
@@ -152,24 +158,37 @@ if __name__ == '__main__':
 
     # TimeXer
     parser.add_argument('--patch_len', type=int, default=16, help='patch length')
+
+    parser.add_argument('--alpha', type=float, default=1.0) 
+    parser.add_argument('--beta',  type=float, default=0.0) 
+    parser.add_argument('--gamma', type=float, default=0.0)  
+
+    parser.add_argument('--use_delta_loss', type=int, default=0, help="use delta loss; True 1 False 0")
+    parser.add_argument('--delta_n', type=int, default=24, help='k-step for delta loss (replaces fixed 24)')
+    parser.add_argument('--use_delta_loss_PACF', type=int, default=0, help="use delta loss; True 1 False 0")
+    parser.add_argument('--use_DBLoss', type=int, default=0, help="use delta loss; True 1 False 0")
+
     args = parser.parse_args()
     
     params = {k:str(v) for k, v in vars(args).items()}
     # 실험 이름 생성
-    experiment_name = f"{args.task_name}_{args.data}_{args.seq_len}_{args.label_len}_{args.pred_len}"
+    experiment_name = f"{args.model}_{args.data}_{args.seq_len}_{args.pred_len}"
     #print(params)
     #exit()
     # 실험 생성 (artifact_location은 데이터셋 이름으로 설정)
     try:
         experiment_id = mlflow.create_experiment(
             name=experiment_name,
-            #artifact_location=f"mlflow/mlruns/{args.data}",  # 데이터셋 이름으로 artifact_location 설정
+            artifact_location=f"mlflow/mlruns/{args.data}",  # 데이터셋 이름으로 artifact_location 설정
             tags=params  # 입력받은 하이퍼파라미터를 tags로 설정
         )
     except Exception as e:
         # 이미 존재하는 실험일 경우, 해당 실험 ID를 가져옴
         experiment = mlflow.get_experiment_by_name(experiment_name)
         experiment_id = experiment.experiment_id
+        if experiment.lifecycle_stage == "deleted":
+            client = MlflowClient()
+            client.restore_experiment(experiment_id)
 
     # 실험 가져오기
     experiment = mlflow.get_experiment(experiment_id)
@@ -180,7 +199,8 @@ if __name__ == '__main__':
         
         # MLflow로 하이퍼파라미터 로깅
         mlflow.log_params(params)  # 하이퍼파라미터 로깅
-
+        # mlflow.log_artifact("/root/workspace/Time-Series-Library/test_results/short_term_forecast_m4_Monthly_DLinear_m4_ftM_sl36_ll18_pl18_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc3_ebtimeF_dtTrue_Exp_0/0.png")
+        # exit()
         if torch.cuda.is_available() and args.use_gpu:
             args.device = torch.device('cuda:{}'.format(args.gpu))
             print('Using GPU')
@@ -212,6 +232,13 @@ if __name__ == '__main__':
             Exp = Exp_Classification
         else:
             Exp = Exp_Long_Term_Forecast
+
+        if args.use_delta_loss == 1:
+            Exp = Exp_Delta_Loss
+        elif args.use_delta_loss_PACF == 1:
+            Exp = Exp_Delta_Loss_PACF
+        elif args.use_DBLoss == 1:
+            Exp = Exp_DBLoss
 
         if args.is_training:
             for ii in range(args.itr):
